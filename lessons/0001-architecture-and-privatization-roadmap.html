@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>第一课 — 架构地图与私有化路线图</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+  <nav class="lesson-nav">
+    <a href="../reference/0001-glossary.html">术语速查</a>
+    <a href="../MISSION.md">Mission</a>
+  </nav>
+
+  <p class="mission-tag">Lesson 0001 · 约 15 分钟</p>
+  <h1>架构地图与私有化路线图</h1>
+
+  <p class="epigraph">
+    私有化不是「换皮」这么简单：你要同时掌控 <em>谁</em> 能登录、<em>谁</em> 能操作哪些浏览器环境、以及 UI 如何调用底层指纹浏览器。
+  </p>
+
+  <h2>1. 你的 Mission（已写入仓库）</h2>
+  <p>
+    目标：私有化部署、定制 UI、账号 + 资产（浏览器环境）+ 权限体系，并为将来在通信层加业务逻辑留接口。
+    详见项目根目录 <a href="../MISSION.md">MISSION.md</a>。
+  </p>
+
+  <h2>2. 开源仓库里有什么</h2>
+  <figure class="diagram">
+    <pre>
+┌─────────────────────────────────────────────────────────────┐
+│  VirtualBrowser.exe（安装包，含 Chromium + native C++）      │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  server/ 打包 → WebUI 管理页（Vue + Element UI）       │  │
+│  │    views/browser/*  环境列表、分组、扩展                 │  │
+│  │    api/native.js    chrome.send ───────────────┐       │  │
+│  │    api/user.js      登录（当前 mock）           │       │  │
+│  │    permission.js    路由守卫 + RBAC 框架        ▼       │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                          native：getBrowserList, setBrowserList… │
+└─────────────────────────────────────────────────────────────┘
+
+automation/  ──Playwright──▶  Workers/{id} 用户数据目录 + --worker-id
+worker/      ──▶  Worker 窗口相关 UI（独立 Vue 项目）
+    </pre>
+  </figure>
+
+  <p>
+    <strong>要点：</strong>浏览器环境的增删改查不走你未来的业务 REST，而是
+    <code>native.js</code> → <code>chrome.send</code>。账号权限体系是你<strong>新增的后端 + 改 server 前端</strong>；
+    环境与指纹数据仍在 native / 本地存储，二者要在设计上对齐。
+  </p>
+
+  <h2>3. 私有化二开要动的三层</h2>
+
+  <div class="card">
+    <strong>层 A — 表现层（最先动手）</strong>
+    Logo、主题色、文案、菜单结构；改 <code>server/src/layout</code>、<code>lang/</code>、<code>styles/</code>。
+  </div>
+  <div class="card">
+    <strong>层 B — 账号与权限（你的核心 Mission）</strong>
+    替换 <code>api/user.js</code> mock；登录拿 token + roles；<code>permission.js</code> 动态路由；
+    环境列表按租户/用户过滤（需业务 API 或扩展 native 元数据）。
+  </div>
+  <div class="card">
+    <strong>层 C — 通信与业务钩子（未来）</strong>
+    在 <code>chrome.send</code> 前后加审计/配额；<code>automation/</code> 接调度系统；
+    或通过 <code>setGlobalData</code> 下发业务配置给 native。
+  </div>
+
+  <h2>4. 推荐学习路线（后续课程）</h2>
+  <ol>
+    <li><strong>0002</strong> — 跑通 <code>server</code> 本地 dev，对照安装包里的页面</li>
+    <li><strong>0003</strong> — 完成第一个 UI 私有化改动（主题/Logo）</li>
+    <li><strong>0004</strong> — 读懂 <code>permission.js</code> + mock 登录，画权限数据流</li>
+    <li><strong>0005</strong> — 设计「用户 — 角色 — 浏览器环境」模型 MVP</li>
+    <li><strong>0006</strong> — <code>native.js</code> 与环境生命周期（启动/删除/导入导出）</li>
+  </ol>
+
+  <h2>5. 检索练习</h2>
+  <p>不看代码，凭记忆选：私有化权限体系主要替换的是哪一块？</p>
+  <div id="quiz-1" class="quiz"></div>
+
+  <div class="win-box">
+    <h3>本节小胜利</h3>
+    <p>
+      你能用一句话说明：<strong>server 管 UI 和权限框架，native 管浏览器环境，automation 管外部脚本驱动</strong>。
+      下一课我们一起把 <code>server</code> dev 环境跑起来。
+    </p>
+  </div>
+
+  <h2>6. 延伸阅读（建议先浏览标题）</h2>
+  <ul>
+    <li>
+      <a href="https://panjiachen.github.io/vue-element-admin-site/guide/essentials/permission.html" target="_blank" rel="noopener">
+        vue-element-admin — Permission
+      </a>
+      （server 权限二开的主文档）
+    </li>
+    <li>
+      <a href="https://github.com/Virtual-Browser/VirtualBrowser" target="_blank" rel="noopener">
+        VirtualBrowser GitHub
+      </a>
+      （产品与 Releases）
+    </li>
+  </ul>
+
+  <p class="teacher-note">
+    <strong>有问题随时在 Cursor 里 @ 老师。</strong>
+    例如：「第二课帮我跑 dev」「权限表怎么设计」—— 我会根据你的 learning-records 调整难度。
+  </p>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    mountQuiz(
+      'quiz-1',
+      '私有化时，账号登录与 RBAC 应主要替换哪部分？',
+      [
+        'server/src/api/user.js 的 mock 登录 API',
+        'server/src/api/native.js 的 chrome.send',
+        'automation/test-api.js 的 Playwright 路径',
+        'worker/package.json 的依赖版本'
+      ],
+      0
+    )
+  </script>
+</body>
+</html>

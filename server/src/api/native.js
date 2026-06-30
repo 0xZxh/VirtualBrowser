@@ -1,4 +1,9 @@
 import { v4 as uuid_v4 } from 'uuid'
+import {
+  devNativeBridgeSend,
+  isDevNativeBridgeMode,
+  isNativeBridgeAvailable
+} from './native-bridge-client'
 
 /* eslint-disable */
 window.cr = {}
@@ -20,7 +25,7 @@ export async function chromeSendTimeout(name, timeout = 2000, ...params) {
       }, timeout)
     })
   }
-  const pCall = new Promise(resolve => {
+  const pCall = new Promise((resolve, reject) => {
     const callbackName = 'callback_' + uuid_v4()
     cr.__callbacks[callbackName] = data => {
       resolve(data)
@@ -28,6 +33,25 @@ export async function chromeSendTimeout(name, timeout = 2000, ...params) {
 
     const args = [callbackName].concat(params)
     console.log(`chrome.send("${name}", `, args, `)`)
+
+    if (isDevNativeBridgeMode()) {
+      devNativeBridgeSend(name, params)
+        .then(data => {
+          cr.webUIResponse(callbackName, 0, data)
+        })
+        .catch(reject)
+      return
+    }
+
+    if (!isNativeBridgeAvailable()) {
+      reject(
+        new Error(
+          'chrome.send 不可用。开发二开请用 npm run dev（dev-native-bridge）；生产环境请在 Virtual Browser 内运行。'
+        )
+      )
+      return
+    }
+
     chrome.send(name, args)
   })
 

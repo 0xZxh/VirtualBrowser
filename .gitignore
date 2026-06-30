@@ -20,5 +20,5 @@ selenium-debug.log
 *.local
 
 # Chrome-bin
-Chrome-bin
+Chrome-bin/*
 

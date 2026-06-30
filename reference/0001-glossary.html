@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>术语速查 — VirtualBrowser 二开</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+  <nav class="lesson-nav">
+    <a href="../lessons/0001-architecture-and-privatization-roadmap.html">← 第一课</a>
+    <a href="../MISSION.md">Mission</a>
+  </nav>
+
+  <p class="mission-tag">Reference · Glossary</p>
+  <h1>VirtualBrowser 二开术语速查</h1>
+
+  <p class="epigraph">后续课程与代码讨论统一使用下列定义。</p>
+
+  <h2>架构层</h2>
+  <dl>
+    <dt><strong>server/</strong></dt>
+    <dd>Vue 2 + Element UI 管理控制台，打包后嵌入 VirtualBrowser 安装包作为 WebUI。</dd>
+
+    <dt><strong>worker/</strong></dt>
+    <dd>Worker 相关 Vue 子项目，与独立浏览器窗口/Worker 实例 UI 相关。</dd>
+
+    <dt><strong>native 桥</strong></dt>
+    <dd><code>server/src/api/native.js</code> 通过 Chromium WebUI 的 <code>chrome.send(name, args)</code> 调用 C++ 侧能力（如 <code>getBrowserList</code>、<code>setBrowserList</code>）。</dd>
+
+    <dt><strong>浏览器环境 / 资产</strong></dt>
+    <dd>一条指纹配置 + 独立用户数据目录，对应列表中的一行；CRUD 经 native 桥，非普通 REST。</dd>
+
+    <dt><strong>automation/</strong></dt>
+    <dd>Playwright 示例：用 <code>launchPersistentContext</code> + <code>--worker-id</code> 驱动已安装 VirtualBrowser。</dd>
+  </dl>
+
+  <h2>权限与私有化</h2>
+  <dl>
+    <dt><strong>mock 登录</strong></dt>
+    <dd>当前 <code>server/src/api/user.js</code> 仍请求 <code>/vue-element-admin/user/*</code>，私有化需换真实认证 API。</dd>
+
+    <dt><strong>路由权限</strong></dt>
+    <dd><code>permission.js</code> 守卫 + <code>asyncRoutes</code> 按 <code>meta.roles</code> 过滤；页面/按钮级用 <code>v-permission</code>。</dd>
+
+    <dt><strong>三层权限（二开目标）</strong></dt>
+    <dd>① UI 可见性（路由/按钮）② 业务 API（谁能操作哪条环境）③ native 层（可选，最终数据落盘与启动）。</dd>
+  </dl>
+
+  <h2>关键 chrome.send 方法（开源可见）</h2>
+  <ul>
+    <li><code>getBrowserList</code> / <code>setBrowserList</code> — 环境列表</li>
+    <li><code>deleteBrowser</code> — 删除环境</li>
+    <li><code>getRuningBrowser</code> — 运行中实例</li>
+    <li><code>getGlobalData</code> / <code>setGlobalData</code> — 全局配置</li>
+    <li><code>getBrowserVersion</code> — 版本信息</li>
+  </ul>
+
+  <p class="teacher-note">有术语冲突或新名词时，在对话里 @ 老师，会更新本页。</p>
+</body>
+</html>

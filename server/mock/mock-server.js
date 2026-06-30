@@ -3,6 +3,7 @@ const bodyParser = require('body-parser')
 const chalk = require('chalk')
 const path = require('path')
 const Mock = require('mockjs')
+const registerNativeBridge = require('./native-bridge')
 
 const mockDir = path.join(process.cwd(), 'mock')
 
@@ -50,6 +51,8 @@ module.exports = app => {
   app.use(bodyParser.urlencoded({
     extended: true
   }))
+
+  registerNativeBridge(app)
 
   const mockRoutes = registerRoutes(app)
   var mockRoutesLength = mockRoutes.mockRoutesLength

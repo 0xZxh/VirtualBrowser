@@ -1,0 +1,6 @@
+{
+  "chromeVersion": "146.0.7680.72",
+  "innerExe": "Chrome-bin/VirtualBrowser/146.0.7680.72/VirtualBrowser.exe",
+  "innerWorkerDir": "Chrome-bin/VirtualBrowser/146.0.7680.72/worker",
+  "userDataWorkers": "%LOCALAPPDATA%/VirtualBrowser/Workers"
+}

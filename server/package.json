@@ -5,6 +5,7 @@
   "author": "Pan <panfree23@gmail.com>",
   "scripts": {
     "dev": "vue-cli-service serve",
+    "prune:outer": "powershell -ExecutionPolicy Bypass -File ./scripts/prune-outer-shell.ps1",
     "lint": "eslint --ext .js,.vue src",
     "build": "vue-cli-service build",
     "build:stage": "vue-cli-service build --mode staging",

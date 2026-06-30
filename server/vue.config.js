@@ -32,12 +32,19 @@ module.exports = {
   productionSourceMap: false,
   devServer: {
     port: port,
-    open: true,
+    open: false,
     overlay: {
       warnings: false,
       errors: true,
     },
     before: require('./mock/mock-server.js'),
+    onListening(server) {
+      const port = server.listeningOption?.port || 9527
+      console.log('')
+      console.log(`  [VirtualBrowser] 二开 dev → http://localhost:${port}`)
+      console.log('  native: dev-native-bridge（浏览器内可创建/启动，走真实内核）')
+      console.log('')
+    },
   },
   configureWebpack: {
     // provide the app's title in webpack's name field, so that
