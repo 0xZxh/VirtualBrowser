@@ -1,6 +1,5 @@
 import Vue from 'vue'
 import Clipboard from 'v-clipboard'
-import Cookies from 'js-cookie'
 
 import 'normalize.css/normalize.css' // a modern alternative to CSS resets
 
@@ -16,6 +15,7 @@ import router from './router'
 import i18n from './lang' // internationalization
 import './icons' // icon
 import './permission' // permission control
+import permission from './directive/permission'
 import './utils/error-log' // error log
 
 import * as filters from './filters' // global filters
@@ -34,6 +34,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 Vue.use(Clipboard)
+Vue.use(permission)
 Vue.use(Element, {
   size: localStorage.getItem('size') || 'mini', // set element-ui default size
   i18n: (key, value) => i18n.t(key, value)

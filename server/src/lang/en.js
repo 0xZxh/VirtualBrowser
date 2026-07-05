@@ -4,6 +4,11 @@ export default {
     browser: 'Browser',
     browser_list: 'List',
     group: 'Group',
+    extensions: 'Extensions',
+    crx_store: 'Store',
+    crx_list: 'Extensions',
+    system: 'System',
+    system_users: 'Users',
     guide: 'Guide',
     permission: 'Permission',
     rolePermission: 'Role Permission',
@@ -28,7 +33,8 @@ export default {
     size: 'Global Size'
   },
   login: {
-    title: 'Login Form',
+    title: 'Fingerprint Browser Console',
+    subtitle: 'Secure isolation · Multi-account management',
     logIn: 'Login',
     username: 'Username',
     password: 'Password',
@@ -157,6 +163,26 @@ export default {
     name_placeholder: 'Please enter group name',
     filter: 'Filter by group',
     default: 'Default Group'
+  },
+  systemUser: {
+    add: 'New User',
+    username: 'Username',
+    name: 'Display Name',
+    roles: 'Roles',
+    tenantId: 'Tenant ID',
+    status: 'Status',
+    active: 'Active',
+    disabled: 'Disabled',
+    resetPassword: 'Reset Password',
+    resetPasswordPrompt: 'Enter new password',
+    disable: 'Disable',
+    disableConfirm: 'Disable this user?',
+    assignBrowsers: 'Assign Browsers',
+    assignBrowsersTitle: 'Assign Environments',
+    assignBrowsersHint:
+      'Checked environments belong to this user. Unchecking revokes them to the current admin.',
+    assignBrowsersEmpty: 'No environments in this tenant. Create some on the Browser page first.',
+    assignBrowsersSuccess: 'Assignments saved'
   },
   permission: {
     addRole: 'New Role',

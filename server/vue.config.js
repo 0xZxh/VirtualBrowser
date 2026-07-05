@@ -37,6 +37,13 @@ module.exports = {
       warnings: false,
       errors: true,
     },
+    proxy: {
+      '/dev-api': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+        pathRewrite: { '^/dev-api': '' },
+      },
+    },
     before: require('./mock/mock-server.js'),
     onListening(server) {
       const port = server.listeningOption?.port || 9527

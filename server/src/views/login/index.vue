@@ -1,5 +1,11 @@
 <template>
   <div class="login-container">
+    <div class="login-brand">
+      <span class="login-brand-mark">FP</span>
+      <h1 class="login-brand-title">{{ $t('login.title') }}</h1>
+      <p class="login-brand-subtitle">{{ $t('login.subtitle') }}</p>
+    </div>
+
     <el-form
       ref="loginForm"
       :model="loginForm"
@@ -9,9 +15,7 @@
       label-position="left"
     >
       <div class="title-container">
-        <h3 class="title">
-          {{ $t('login.title') }}
-        </h3>
+        <h3 class="title">{{ $t('login.logIn') }}</h3>
         <lang-select class="set-language" />
       </div>
 
@@ -62,52 +66,27 @@
       >
         {{ $t('login.logIn') }}
       </el-button>
-
-      <div style="position: relative">
-        <div class="tips">
-          <span>{{ $t('login.username') }} : admin</span>
-          <span>{{ $t('login.password') }} : {{ $t('login.any') }}</span>
-        </div>
-        <div class="tips">
-          <span style="margin-right: 18px">{{ $t('login.username') }} : editor</span>
-          <span>{{ $t('login.password') }} : {{ $t('login.any') }}</span>
-        </div>
-
-        <el-button class="thirdparty-button" type="primary" @click="showDialog = true">
-          {{ $t('login.thirdparty') }}
-        </el-button>
-      </div>
     </el-form>
-
-    <el-dialog :title="$t('login.thirdparty')" :visible.sync="showDialog">
-      {{ $t('login.thirdpartyTips') }}
-      <br />
-      <br />
-      <br />
-      <social-sign />
-    </el-dialog>
   </div>
 </template>
 
 <script>
-import { validUsername } from '@/utils/validate'
 import LangSelect from '@/components/LangSelect'
-import SocialSign from './components/SocialSignin'
 
 export default {
   name: 'Login',
-  components: { LangSelect, SocialSign },
+  components: { LangSelect },
   data() {
     const validateUsername = (rule, value, callback) => {
-      if (!validUsername(value)) {
-        callback(new Error('Please enter the correct user name'))
+      if (!value || !value.trim()) {
+        callback(new Error('请输入用户名'))
       } else {
         callback()
       }
     }
     const validatePassword = (rule, value, callback) => {
       if (value.length < 6) {
-        callback(new Error('The password can not be less than 6 digits'))
+        callback(new Error('密码不能少于 6 位'))
       } else {
         callback()
       }
@@ -115,7 +94,7 @@ export default {
     return {
       loginForm: {
         username: 'admin',
-        password: '111111'
+        password: 'admin123'
       },
       loginRules: {
         username: [{ required: true, trigger: 'blur', validator: validateUsername }],
@@ -124,7 +103,6 @@ export default {
       passwordType: 'password',
       capsTooltip: false,
       loading: false,
-      showDialog: false,
       redirect: undefined,
       otherQuery: {}
     }
@@ -141,18 +119,12 @@ export default {
       immediate: true
     }
   },
-  created() {
-    // window.addEventListener('storage', this.afterQRScan)
-  },
   mounted() {
     if (this.loginForm.username === '') {
       this.$refs.username.focus()
     } else if (this.loginForm.password === '') {
       this.$refs.password.focus()
     }
-  },
-  destroyed() {
-    // window.removeEventListener('storage', this.afterQRScan)
   },
   methods: {
     checkCapslock(e) {
@@ -196,33 +168,12 @@ export default {
         return acc
       }, {})
     }
-    // afterQRScan() {
-    //   if (e.key === 'x-admin-oauth-code') {
-    //     const code = getQueryObject(e.newValue)
-    //     const codeMap = {
-    //       wechat: 'code',
-    //       tencent: 'code'
-    //     }
-    //     const type = codeMap[this.auth_type]
-    //     const codeName = code[type]
-    //     if (codeName) {
-    //       this.$store.dispatch('LoginByThirdparty', codeName).then(() => {
-    //         this.$router.push({ path: this.redirect || '/' })
-    //       })
-    //     } else {
-    //       alert('第三方登录失败')
-    //     }
-    //   }
-    // }
   }
 }
 </script>
 
 <style lang="scss">
-/* 修复input 背景不协调 和光标变色 */
-/* Detail see https://github.com/PanJiaChen/vue-element-admin/pull/927 */
-
-$bg: #283443;
+$bg: #0f172a;
 $light_gray: #fff;
 $cursor: #fff;
 
@@ -232,7 +183,6 @@ $cursor: #fff;
   }
 }
 
-/* reset element-ui css */
 .login-container {
   .el-input {
     display: inline-block;
@@ -257,44 +207,74 @@ $cursor: #fff;
   }
 
   .el-form-item {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 5px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 8px;
     color: #454545;
   }
 }
 </style>
 
 <style lang="scss" scoped>
-$bg: #2d3a4b;
-$dark_gray: #889aa4;
-$light_gray: #eee;
+$dark_gray: #94a3b8;
+$light_gray: #e2e8f0;
 
 .login-container {
   min-height: 100%;
   width: 100%;
-  background-color: $bg;
+  background: linear-gradient(145deg, #020617 0%, #0f172a 45%, #1e293b 100%);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+
+  .login-brand {
+    text-align: center;
+    margin-bottom: 32px;
+
+    .login-brand-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(14, 165, 233, 0.35);
+    }
+
+    .login-brand-title {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 600;
+      color: $light_gray;
+    }
+
+    .login-brand-subtitle {
+      margin: 0;
+      font-size: 14px;
+      color: $dark_gray;
+    }
+  }
 
   .login-form {
     position: relative;
-    width: 520px;
+    width: 420px;
     max-width: 100%;
-    padding: 160px 35px 0;
+    padding: 36px 32px 28px;
     margin: 0 auto;
     overflow: hidden;
-  }
-
-  .tips {
-    font-size: 14px;
-    color: #fff;
-    margin-bottom: 10px;
-
-    span {
-      &:first-of-type {
-        margin-right: 16px;
-      }
-    }
+    background: rgba(30, 41, 59, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 12px;
+    backdrop-filter: blur(8px);
   }
 
   .svg-container {
@@ -307,19 +287,20 @@ $light_gray: #eee;
 
   .title-container {
     position: relative;
+    margin-bottom: 8px;
 
     .title {
-      font-size: 26px;
+      font-size: 18px;
       color: $light_gray;
-      margin: 0px auto 40px auto;
+      margin: 0px auto 24px auto;
       text-align: center;
-      font-weight: bold;
+      font-weight: 500;
     }
 
     .set-language {
       color: #fff;
       position: absolute;
-      top: 3px;
+      top: 0;
       font-size: 18px;
       right: 0px;
       cursor: pointer;
@@ -334,18 +315,6 @@ $light_gray: #eee;
     color: $dark_gray;
     cursor: pointer;
     user-select: none;
-  }
-
-  .thirdparty-button {
-    position: absolute;
-    right: 0;
-    bottom: 6px;
-  }
-
-  @media only screen and (max-width: 470px) {
-    .thirdparty-button {
-      display: none;
-    }
   }
 }
 </style>

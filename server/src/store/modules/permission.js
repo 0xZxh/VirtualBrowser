@@ -43,6 +43,10 @@ const mutations = {
   SET_ROUTES: (state, routes) => {
     state.addRoutes = routes
     state.routes = constantRoutes.concat(routes)
+  },
+  RESET_ROUTES: state => {
+    state.addRoutes = []
+    state.routes = constantRoutes.concat([])
   }
 }
 
@@ -58,6 +62,10 @@ const actions = {
       commit('SET_ROUTES', accessedRoutes)
       resolve(accessedRoutes)
     })
+  },
+  resetRoutes({ commit }) {
+    commit('RESET_ROUTES')
+    return Promise.resolve()
   }
 }
 

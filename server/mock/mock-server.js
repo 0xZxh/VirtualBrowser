@@ -44,13 +44,22 @@ const responseFake = (url, type, respond) => {
   }
 }
 
+function skipBodyParserForProxy(req) {
+  // /dev-api 由 vue.config.js proxy 转发至 NestJS；若在 before 里先 json 解析会耗尽 req 流，POST 代理会挂起直至 axios 10s 超时
+  return req.path.startsWith('/dev-api')
+}
+
 module.exports = app => {
   // parse app.body
   // https://expressjs.com/en/4x/api.html#req.body
-  app.use(bodyParser.json())
-  app.use(bodyParser.urlencoded({
-    extended: true
-  }))
+  app.use((req, res, next) => {
+    if (skipBodyParserForProxy(req)) return next()
+    bodyParser.json()(req, res, next)
+  })
+  app.use((req, res, next) => {
+    if (skipBodyParserForProxy(req)) return next()
+    bodyParser.urlencoded({ extended: true })(req, res, next)
+  })
 
   registerNativeBridge(app)
 

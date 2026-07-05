@@ -8,6 +8,8 @@ export default {
     crx_store: '插件市场',
     crx_upload: '插件上传',
     crx_list: '插件管理',
+    system: '系统管理',
+    system_users: '用户管理',
     guide: '引导页',
     permission: '权限测试页',
     rolePermission: '角色权限',
@@ -32,7 +34,8 @@ export default {
     size: '布局大小'
   },
   login: {
-    title: '系统登录',
+    title: '指纹浏览器控制台',
+    subtitle: '安全隔离 · 多账号管理',
     logIn: '登录',
     username: '账号',
     password: '密码',
@@ -159,6 +162,25 @@ export default {
     name_placeholder: '请输入分组名称',
     filter: '按分组筛选',
     default: '默认分组'
+  },
+  systemUser: {
+    add: '新建用户',
+    username: '登录账号',
+    name: '显示名称',
+    roles: '角色',
+    tenantId: '租户 ID',
+    status: '状态',
+    active: '正常',
+    disabled: '已禁用',
+    resetPassword: '重置密码',
+    resetPasswordPrompt: '请输入新密码',
+    disable: '禁用',
+    disableConfirm: '确定禁用该用户吗？',
+    assignBrowsers: '分配浏览器',
+    assignBrowsersTitle: '分配指纹环境',
+    assignBrowsersHint: '勾选的环境将归属该用户；取消勾选将收回至当前管理员。',
+    assignBrowsersEmpty: '当前租户暂无环境，请先在浏览器页创建。',
+    assignBrowsersSuccess: '分配已保存'
   },
   permission: {
     addRole: '新增角色',

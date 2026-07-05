@@ -23,4 +23,4 @@
 - 修改 Chromium 源码或自编译浏览器内核
 - Mac / Linux / Android 客户端适配
 - 商业化计费、License 加密（除非后续 Mission 修订）
-- 一次性做完完整 RBAC 后台——先 MVP，再迭代
+- 可配置 Permission 表（细粒度权限码）— **标准可交付用固定三角色**；完整 RBAC 后台为后续版本

@@ -3,6 +3,7 @@
     <div class="filter-container">
       <div>
         <el-button
+          v-permission="['admin', 'operator']"
           class="filter-item"
           type="primary"
           icon="el-icon-circle-plus"
@@ -10,7 +11,7 @@
         >
           {{ $t('browser.add') }}
         </el-button>
-        <el-dropdown class="filter-item">
+        <el-dropdown v-permission="['admin', 'operator']" class="filter-item">
           <el-button type="primary">
             {{ $t('browser.batchActions') }}
             <i class="el-icon-arrow-down el-icon--right" />
@@ -22,7 +23,7 @@
             <el-dropdown-item @click.native="() => (dialogVisible = true)">
               {{ $t('browser.batchCreate') }}
             </el-dropdown-item>
-            <el-dropdown-item @click.native="handleBatchDelete">
+            <el-dropdown-item v-permission="['admin']" @click.native="handleBatchDelete">
               {{ $t('browser.batchDelete') }}
             </el-dropdown-item>
             <el-dropdown-item @click.native="handleBatchSetGroup">
@@ -54,6 +55,7 @@
         </el-button>
         <el-button @click="showSettingsDialog">IP查询API设置</el-button>
         <el-upload
+          v-permission="['admin', 'operator']"
           action=""
           accept=".json"
           :auto-upload="false"
@@ -62,7 +64,7 @@
         >
           <el-button style="margin-left: 10px">{{ $t('browser.import.import') }}</el-button>
         </el-upload>
-        <el-button style="margin-left: 10px" @click="onExport">
+        <el-button v-permission="['admin', 'operator']" style="margin-left: 10px" @click="onExport">
           {{ $t('browser.import.export') }}
         </el-button>
       </div>
@@ -92,7 +94,11 @@
       <el-table-column :label="$t('group.group')" min-width="50px">
         <template slot-scope="{ row }">
           <el-tooltip class="item" effect="dark" content="点击编辑分组" placement="top">
-            <el-button type="text" @click="handleEditGroup(row)">
+            <el-button
+              v-permission="['admin', 'operator']"
+              type="text"
+              @click="handleEditGroup(row)"
+            >
               {{ row.group }}
             </el-button>
           </el-tooltip>
@@ -152,11 +158,12 @@
         class-name="small-padding fixed-width"
       >
         <template slot-scope="{ row, $index }">
-          <el-button type="primary" @click="handleUpdate(row)">
+          <el-button v-permission="['admin', 'operator']" type="primary" @click="handleUpdate(row)">
             {{ $t('browser.edit') }}
           </el-button>
           <el-button
             v-if="row.status != 'deleted'"
+            v-permission="['admin']"
             type="danger"
             @click="handleDelete(row, $index)"
           >

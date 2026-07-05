@@ -92,30 +92,6 @@ export const constantRoutes = [
         component: require('@/views/browser/index').default,
         name: 'Browser',
         meta: { title: 'browser_list', icon: 'list', affix: true }
-      },
-      {
-        path: 'group',
-        component: require('@/views/browser/group').default,
-        name: 'Group',
-        meta: { title: 'group', icon: 'tab', affix: true }
-      }
-    ]
-  },
-  {
-    path: '/crx',
-    component: Layout,
-    redirect: '/crx/store',
-    meta: { title: 'extensions', icon: 'component' },
-    children: [
-      {
-        path: 'store',
-        component: require('@/views/crx/store').default,
-        meta: { title: 'crx_store', icon: 'shopping', affix: true }
-      },
-      {
-        path: 'list',
-        component: require('@/views/crx/list').default,
-        meta: { title: 'crx_list', icon: 'component', affix: true }
       }
     ]
   }
@@ -126,6 +102,51 @@ export const constantRoutes = [
  * the routes that need to be dynamically loaded based on user roles
  */
 export const asyncRoutes = [
+  {
+    path: '/',
+    component: Layout,
+    meta: { title: 'browser', icon: 'international', roles: ['admin', 'operator'] },
+    children: [
+      {
+        path: 'group',
+        component: require('@/views/browser/group').default,
+        name: 'Group',
+        meta: { title: 'group', icon: 'tab', affix: true, roles: ['admin', 'operator'] }
+      }
+    ]
+  },
+  {
+    path: '/crx',
+    component: Layout,
+    redirect: '/crx/store',
+    meta: { title: 'extensions', icon: 'component', roles: ['admin', 'operator'] },
+    children: [
+      {
+        path: 'store',
+        component: require('@/views/crx/store').default,
+        meta: { title: 'crx_store', icon: 'shopping', affix: true, roles: ['admin', 'operator'] }
+      },
+      {
+        path: 'list',
+        component: require('@/views/crx/list').default,
+        meta: { title: 'crx_list', icon: 'component', affix: true, roles: ['admin', 'operator'] }
+      }
+    ]
+  },
+  {
+    path: '/system',
+    component: Layout,
+    redirect: '/system/users',
+    meta: { title: 'system', icon: 'lock', roles: ['admin'] },
+    children: [
+      {
+        path: 'users',
+        component: require('@/views/system/users/index').default,
+        name: 'SystemUsers',
+        meta: { title: 'system_users', icon: 'user', roles: ['admin'] }
+      }
+    ]
+  },
   // {
   //   path: '/icon',
   //   component: Layout,

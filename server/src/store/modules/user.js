@@ -1,5 +1,6 @@
 import { login, logout, getInfo } from '@/api/user'
 import { getToken, setToken, removeToken } from '@/utils/auth'
+import { clearBrowserListCache } from '@/api/native'
 import router, { resetRouter } from '@/router'
 
 const state = {
@@ -49,25 +50,24 @@ const actions = {
   // get user info
   getInfo({ commit, state }) {
     return new Promise((resolve, reject) => {
-      getInfo(state.token)
+      getInfo()
         .then(response => {
           const { data } = response
 
           if (!data) {
-            reject('Verification failed, please Login again.')
+            reject('验证失败，请重新登录')
           }
 
-          const { roles, name, avatar, introduction } = data
+          const { roles, name, username, avatar, introduction } = data
 
-          // roles must be a non-empty array
           if (!roles || roles.length <= 0) {
             reject('getInfo: roles must be a non-null array!')
           }
 
           commit('SET_ROLES', roles)
-          commit('SET_NAME', name)
-          commit('SET_AVATAR', avatar)
-          commit('SET_INTRODUCTION', introduction)
+          commit('SET_NAME', name || username || '')
+          commit('SET_AVATAR', avatar || '')
+          commit('SET_INTRODUCTION', introduction || '')
           resolve(data)
         })
         .catch(error => {
@@ -79,12 +79,14 @@ const actions = {
   // user logout
   logout({ commit, state, dispatch }) {
     return new Promise((resolve, reject) => {
-      logout(state.token)
-        .then(() => {
+      logout()
+        .then(async () => {
           commit('SET_TOKEN', '')
           commit('SET_ROLES', [])
           removeToken()
           resetRouter()
+          dispatch('permission/resetRoutes', null, { root: true })
+          await clearBrowserListCache().catch(() => {})
 
           // reset visited views and cached views
           // to fixed https://github.com/PanJiaChen/vue-element-admin/issues/2485

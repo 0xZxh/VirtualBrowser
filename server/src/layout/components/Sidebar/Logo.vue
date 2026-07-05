@@ -2,11 +2,10 @@
   <div class="sidebar-logo-container" :class="{ collapse: collapse }">
     <transition name="sidebarLogoFade">
       <router-link v-if="collapse" key="collapse" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo" />
-        <h1 v-else class="sidebar-title">{{ title }}</h1>
+        <span class="sidebar-logo-mark">FP</span>
       </router-link>
       <router-link v-else key="expand" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo" />
+        <span class="sidebar-logo-mark">FP</span>
         <h1 class="sidebar-title">{{ title }}</h1>
       </router-link>
     </transition>
@@ -14,6 +13,8 @@
 </template>
 
 <script>
+import defaultSettings from '@/settings'
+
 export default {
   name: 'SidebarLogo',
   props: {
@@ -24,14 +25,15 @@ export default {
   },
   data() {
     return {
-      title: 'Virtual Browser',
-      logo: require('@/assets/img/64.png')
+      title: defaultSettings.title
     }
   }
 }
 </script>
 
 <style lang="scss" scoped>
+@import '@/styles/variables.scss';
+
 .sidebarLogoFade-enter-active {
   transition: opacity 1.5s;
 }
@@ -46,36 +48,50 @@ export default {
   width: 100%;
   height: 50px;
   line-height: 50px;
-  background: #2b2f3a;
+  background: $subMenuBg;
   text-align: center;
   overflow: hidden;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 
   & .sidebar-logo-link {
     height: 100%;
     width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-    & .sidebar-logo {
-      width: 32px;
-      height: 32px;
-      vertical-align: middle;
-      margin-right: 12px;
+    & .sidebar-logo-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      margin-right: 10px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #0ea5e9, #0284c7);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
     }
 
     & .sidebar-title {
       display: inline-block;
       margin: 0;
-      color: #fff;
+      color: #e2e8f0;
       font-weight: 600;
       line-height: 50px;
       font-size: 14px;
-      font-family: Avenir, Helvetica Neue, Arial, Helvetica, sans-serif;
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
       vertical-align: middle;
+      white-space: nowrap;
     }
   }
 
   &.collapse {
-    .sidebar-logo {
-      margin-right: 0px;
+    .sidebar-logo-mark {
+      margin-right: 0;
     }
   }
 }

@@ -24,34 +24,14 @@
         <lang-select class="right-menu-item hover-effect" />
       </template>
 
-      <el-dropdown
-        v-if="false"
-        class="avatar-container right-menu-item hover-effect"
-        trigger="click"
-      >
-        <div class="avatar-wrapper">
-          <img :src="avatar + '?imageView2/1/w/80/h/80'" class="user-avatar" />
-          <i class="el-icon-caret-bottom" />
-        </div>
+      <el-dropdown class="user-container right-menu-item hover-effect" trigger="click">
+        <span class="user-menu-trigger">
+          <i class="el-icon-user-solid" />
+          <span class="user-name">{{ name || $t('navbar.profile') }}</span>
+          <i class="el-icon-arrow-down el-icon--right" />
+        </span>
         <el-dropdown-menu slot="dropdown">
-          <router-link to="/profile/index">
-            <el-dropdown-item>
-              {{ $t('navbar.profile') }}
-            </el-dropdown-item>
-          </router-link>
-          <router-link to="/">
-            <el-dropdown-item>
-              {{ $t('navbar.dashboard') }}
-            </el-dropdown-item>
-          </router-link>
-          <a target="_blank" href="https://github.com/PanJiaChen/vue-element-admin/">
-            <el-dropdown-item>
-              {{ $t('navbar.github') }}
-            </el-dropdown-item>
-          </a>
-          <a target="_blank" href="https://panjiachen.github.io/vue-element-admin-site/#/">
-            <el-dropdown-item>Docs</el-dropdown-item>
-          </a>
+          <el-dropdown-item disabled>{{ name || '—' }}</el-dropdown-item>
           <el-dropdown-item divided @click.native="logout">
             <span style="display: block">{{ $t('navbar.logOut') }}</span>
           </el-dropdown-item>
@@ -82,7 +62,7 @@ export default {
     Search
   },
   computed: {
-    ...mapGetters(['sidebar', 'avatar', 'device'])
+    ...mapGetters(['sidebar', 'avatar', 'device', 'name'])
   },
   methods: {
     toggleSideBar() {
@@ -90,7 +70,7 @@ export default {
     },
     async logout() {
       await this.$store.dispatch('user/logout')
-      this.$router.push(`/login?redirect=${this.$route.fullPath}`)
+      this.$router.push('/login')
     }
   }
 }
@@ -149,6 +129,30 @@ export default {
 
         &:hover {
           background: rgba(0, 0, 0, 0.025);
+        }
+      }
+    }
+
+    .user-container {
+      margin-right: 16px;
+
+      .user-menu-trigger {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+        font-size: 14px;
+        color: #5a5e66;
+
+        .el-icon-user-solid {
+          font-size: 18px;
+          margin-right: 6px;
+        }
+
+        .user-name {
+          max-width: 120px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
       }
     }

@@ -8,6 +8,8 @@ export function isDevNativeBridgeMode() {
 
 let devBridgeWarned = false
 
+import { getToken } from '@/utils/auth'
+
 export async function devNativeBridgeSend(name, params) {
   if (!devBridgeWarned) {
     devBridgeWarned = true
@@ -16,9 +18,15 @@ export async function devNativeBridgeSend(name, params) {
     )
   }
 
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
   const res = await fetch('/dev-native-bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ name, params })
   })
 

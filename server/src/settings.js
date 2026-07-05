@@ -1,5 +1,5 @@
 module.exports = {
-  title: 'Virtual Browser',
+  title: '指纹浏览器控制台',
 
   /**
    * @type {boolean} true | false
