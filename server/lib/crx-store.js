@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const AdmZip = require('adm-zip')
 
 const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
 const userDataDir = path.join(vbRoot, 'User Data')
@@ -222,6 +223,121 @@ function updateCrxEnvironments(crxId, envIds) {
   return { ok: true, item }
 }
 
+function unpackCrxFile(crxPath, outDir) {
+  const buf = fs.readFileSync(crxPath)
+  let zipStart = 0
+
+  if (buf.length >= 12 && buf.toString('utf8', 0, 4) === 'Cr24') {
+    const version = buf.readUInt32LE(4)
+    if (version === 2) {
+      const pubLen = buf.readUInt32LE(8)
+      const sigLen = buf.readUInt32LE(12)
+      zipStart = 16 + pubLen + sigLen
+    } else if (version === 3) {
+      const headerSize = buf.readUInt32LE(8)
+      zipStart = 12 + headerSize
+    }
+  }
+
+  ensureDir(outDir)
+  const zip = new AdmZip(buf.subarray(zipStart))
+  zip.extractAllTo(outDir, true)
+  return outDir
+}
+
+function unpackZipFile(zipPath, outDir) {
+  ensureDir(outDir)
+  const zip = new AdmZip(zipPath)
+  zip.extractAllTo(outDir, true)
+  return outDir
+}
+
+function ensureUnpackedExtension(item) {
+  if (!item || !item.path) return null
+  if (item.url && !item.path) return null
+
+  const srcPath = item.path
+  if (!fs.existsSync(srcPath)) return null
+
+  const stat = fs.statSync(srcPath)
+  if (stat.isDirectory()) {
+    return fs.existsSync(path.join(srcPath, 'manifest.json')) ? srcPath : null
+  }
+
+  const ext = path.extname(srcPath).toLowerCase()
+  const unpackedDir = path.join(extensionsRoot, 'unpacked', String(item.id))
+  const manifestPath = path.join(unpackedDir, 'manifest.json')
+  const markerPath = path.join(unpackedDir, '.source-mtime')
+  const sourceMtime = String(stat.mtimeMs)
+
+  let needUnpack = !fs.existsSync(manifestPath)
+  if (!needUnpack && fs.existsSync(markerPath)) {
+    needUnpack = fs.readFileSync(markerPath, 'utf8') !== sourceMtime
+  }
+
+  if (needUnpack) {
+    fs.rmSync(unpackedDir, { recursive: true, force: true })
+    if (ext === '.crx') {
+      unpackCrxFile(srcPath, unpackedDir)
+    } else if (ext === '.zip') {
+      unpackZipFile(srcPath, unpackedDir)
+    } else {
+      return null
+    }
+    fs.writeFileSync(markerPath, sourceMtime, 'utf8')
+  }
+
+  return fs.existsSync(manifestPath) ? unpackedDir : null
+}
+
+/** 合并环境 payload.crxIds 与 crx-list.environments 绑定 */
+function getEnabledExtensionPathsForEnv(envId, envCrxIds) {
+  const list = readList()
+  const wanted = new Set((envCrxIds || []).map(String))
+
+  for (const item of list) {
+    if ((item.environments || []).map(String).includes(String(envId))) {
+      wanted.add(String(item.id))
+    }
+  }
+
+  const paths = []
+  for (const crxId of wanted) {
+    const item = list.find(it => String(it.id) === String(crxId))
+    if (!item || item.enabled === false) continue
+    const dir = ensureUnpackedExtension(item)
+    if (dir) paths.push(dir)
+  }
+  return paths
+}
+
+/** 环境保存时同步 crx-list 的 environments[] */
+function syncEnvCrxBindings(envId, crxIds) {
+  const envKey = String(envId)
+  const wanted = new Set((crxIds || []).map(String))
+  const list = readList()
+  let changed = false
+
+  for (const item of list) {
+    const envs = new Set((item.environments || []).map(String))
+    const shouldHave = wanted.has(String(item.id))
+    const has = envs.has(envKey)
+
+    if (shouldHave && !has) {
+      envs.add(envKey)
+      item.environments = [...envs]
+      changed = true
+    } else if (!shouldHave && has) {
+      envs.delete(envKey)
+      item.environments = [...envs]
+      changed = true
+    }
+  }
+
+  if (changed) writeList(list)
+  return { ok: true, changed }
+}
+
 module.exports = {
   listFile,
   extensionsRoot,
@@ -232,5 +348,8 @@ module.exports = {
   enableLocalCrx,
   updateCrx,
   getCrxEnvironments,
-  updateCrxEnvironments
+  updateCrxEnvironments,
+  ensureUnpackedExtension,
+  getEnabledExtensionPathsForEnv,
+  syncEnvCrxBindings
 }

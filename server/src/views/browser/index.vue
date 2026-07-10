@@ -130,6 +130,43 @@
         </template>
       </el-table-column>
 
+      <el-table-column :label="$t('browser.cloudSync')" width="240" align="center">
+        <template slot-scope="{ row }">
+          <div v-if="row.syncLoading" v-loading="true" style="min-height: 28px" />
+          <template v-else>
+            <div v-if="row.syncStatus">
+              <el-tag :type="syncStatusTagType(row.syncStatus.status)" size="mini">
+                {{ syncStatusLabel(row.syncStatus.status) }}
+              </el-tag>
+              <div class="sync-version-hint">{{ formatSyncVersion(row.syncStatus) }}</div>
+            </div>
+            <span v-else>—</span>
+            <el-dropdown
+              v-permission="['admin', 'operator']"
+              trigger="click"
+              style="margin-top: 6px"
+              @command="cmd => handleSyncCommand(cmd, row)"
+            >
+              <el-button size="mini" :loading="row.syncActionLoading">
+                {{ $t('browser.cloudSync') }}
+                <i class="el-icon-arrow-down el-icon--right" />
+              </el-button>
+              <el-dropdown-menu slot="dropdown">
+                <el-dropdown-item command="upload">
+                  {{ $t('browser.cloudSyncUpload') }}
+                </el-dropdown-item>
+                <el-dropdown-item command="pull">
+                  {{ $t('browser.cloudSyncPull') }}
+                </el-dropdown-item>
+                <el-dropdown-item command="refresh" divided>
+                  {{ $t('browser.cloudSyncRefresh') }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </el-dropdown>
+          </template>
+        </template>
+      </el-table-column>
+
       <el-table-column :label="$t('browser.launch')" class-name="status-col" width="120">
         <template slot-scope="{ row }">
           <el-button
@@ -173,14 +210,6 @@
       </el-table-column>
     </el-table>
 
-    <div class="qq-group">
-      <img src="@/assets/VirtualBrowser-qq-group.png" />
-      <p>
-        QQ Group:
-        <code>564142956</code>
-      </p>
-    </div>
-
     <el-drawer
       :title="$t(dialogStatus == 'create' ? 'browser.add' : 'browser.edit')"
       :visible.sync="dialogFormVisible"
@@ -207,6 +236,24 @@
                   <el-form-item :label="$t('browser.group')">
                     <el-select v-model="form.group" :placeholder="$t('browser.select')">
                       <el-option v-for="item in GroupList" :key="item.id" :value="item.name" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item :label="$t('browser.crxExtensions')">
+                    <el-select
+                      v-model="form.crxIds"
+                      multiple
+                      filterable
+                      clearable
+                      :placeholder="$t('browser.crxExtensionsPlaceholder')"
+                      style="width: 100%"
+                    >
+                      <el-option
+                        v-for="crx in crxOptions"
+                        :key="crx.id"
+                        :label="crx.name"
+                        :value="String(crx.id)"
+                        :disabled="crx.enabled === false"
+                      />
                     </el-select>
                   </el-form-item>
                   <el-form-item :label="$t('browser.platform')">
@@ -758,7 +805,11 @@ import {
   chromeSend,
   chromeSendTimeout,
   updateRuningState,
-  getGroupList
+  getGroupList,
+  getLocalCrxList,
+  getProfileSyncStatus,
+  syncProfileToCloud,
+  syncProfileFromCloud
 } from '@/api/native'
 import { saveAs } from 'file-saver'
 import waves from '@/directive/waves' // waves directive
@@ -1012,7 +1063,8 @@ export default {
       checkProxyState: {
         checking: false
       },
-      GroupList: []
+      GroupList: [],
+      crxOptions: []
     }
   },
   computed: {
@@ -1193,6 +1245,75 @@ export default {
       this.processUpdateData()
       await updateRuningState()
       this.listLoading = false
+      this.loadSyncStatuses()
+    },
+    async loadSyncStatuses() {
+      await Promise.all(
+        this.list.map(async row => {
+          this.$set(row, 'syncLoading', true)
+          try {
+            const status = await getProfileSyncStatus(String(row.id))
+            this.$set(row, 'syncStatus', status)
+          } catch (err) {
+            this.$set(row, 'syncStatus', {
+              status: 'error',
+              cloudError: err.message || String(err)
+            })
+          } finally {
+            this.$set(row, 'syncLoading', false)
+          }
+        })
+      )
+    },
+    syncStatusTagType(status) {
+      const map = {
+        synced: 'success',
+        'cloud-newer': 'warning',
+        'local-newer': 'warning',
+        'local-only': 'info',
+        'cloud-only': 'info',
+        'no-cloud': 'info',
+        'no-auth': 'info',
+        error: 'danger'
+      }
+      return map[status] || 'info'
+    },
+    syncStatusLabel(status) {
+      const key = status || 'unknown'
+      const label = this.$t('browser.cloudSyncStatus.' + key)
+      if (label && label.indexOf('browser.cloudSyncStatus') === -1) {
+        return label
+      }
+      return this.$t('browser.cloudSyncStatus.unknown')
+    },
+    formatSyncVersion(syncStatus) {
+      if (!syncStatus) return ''
+      const local = syncStatus.localVersion != null ? syncStatus.localVersion : '—'
+      const cloud = syncStatus.cloudVersion != null ? syncStatus.cloudVersion : '—'
+      return this.$t('browser.cloudSyncVersion', { local, cloud })
+    },
+    async handleSyncCommand(command, row) {
+      if (row.isRunning) {
+        this.$message.warning(this.$t('browser.cloudSyncRunningBlock'))
+        return
+      }
+      const envId = String(row.id)
+      this.$set(row, 'syncActionLoading', true)
+      try {
+        if (command === 'upload') {
+          await syncProfileToCloud(envId)
+          this.$message.success(this.$t('browser.cloudSyncSuccess'))
+        } else if (command === 'pull') {
+          await syncProfileFromCloud(envId)
+          this.$message.success(this.$t('browser.cloudSyncSuccess'))
+        }
+        const status = await getProfileSyncStatus(envId)
+        this.$set(row, 'syncStatus', status)
+      } catch (err) {
+        this.$message.error((err && err.message) || String(err))
+      } finally {
+        this.$set(row, 'syncActionLoading', false)
+      }
     },
     handleFilter() {
       this.listQuery.page = 1
@@ -1343,7 +1464,8 @@ export default {
         mac: { mode: 1, value: genRandomMacAddr() },
         dnt: { mode: 1, value: 0 },
         'port-scan': { mode: 1, value: [] },
-        gpu: { mode: 1, value: 1 }
+        gpu: { mode: 1, value: 1 },
+        crxIds: []
       }
     },
     getCurrentTimeZone() {
@@ -1352,6 +1474,14 @@ export default {
         this.cachedTimeZone = TimeZones.find(item => item.offset === timezoneOffset)
       }
       return this.cachedTimeZone
+    },
+    async loadCrxOptions() {
+      try {
+        this.crxOptions = await getLocalCrxList()
+      } catch (err) {
+        console.warn(err)
+        this.crxOptions = []
+      }
     },
     resetForm() {
       this.$nextTick(() => {
@@ -1372,6 +1502,7 @@ export default {
     },
     handleCreate() {
       this.resetForm()
+      this.loadCrxOptions()
       this.dialogStatus = 'create'
       this.dialogFormVisible = true
       this.$nextTick(() => {
@@ -1491,10 +1622,12 @@ export default {
     },
     handleUpdate(row) {
       this.resetForm()
+      this.loadCrxOptions()
       this.dialogStatus = 'update'
       this.dialogFormVisible = true
       this.$nextTick(() => {
         this.form = Object.assign(this.form, row) // copy obj
+        this.form.crxIds = (row.crxIds || []).map(String)
         const cookie = this.form.cookie.value
         if (cookie && typeof cookie === 'object') {
           this.form.cookie.value = JSON.stringify(this.form.cookie.value)
@@ -2079,6 +2212,13 @@ export default {
       padding: 10px 20px;
     }
   }
+}
+
+.sync-version-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 .qq-group {

@@ -38,12 +38,6 @@
             </span>
           </span>
         </p>
-        <p>
-          <img src="./assets/VirtualBrowser-qq-group.png" />
-          <br />
-          QQ Group:
-          <code>564142956</code>
-        </p>
       </div>
       <div v-if="!apiLinkIsValid" class="api-link-warning">
         <h2>API链接未设置</h2>

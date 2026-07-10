@@ -41,7 +41,7 @@
 ### 05 Profile 云同步
 
 - [x] 登录 token 自动用于 pull/upload（dev-native-bridge Bearer；`CLOUD_API_TOKEN` 可选兜底）
-- [ ] 环境列表展示同步状态；「立即同步」按钮
+- [x] 环境列表展示同步状态；「立即同步」按钮（上传/拉取/刷新）
 - [ ] 跨机 A→B 验收文档/脚本
 
 ### 04 CRX 插件

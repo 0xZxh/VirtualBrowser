@@ -70,23 +70,38 @@ export async function chromeSend(name, ...params) {
   return chromeSendTimeout(name, 2000, ...params)
 }
 
+function parseGlobalDataPayload(raw) {
+  if (raw == null || raw === '') {
+    return {}
+  }
+  let data = raw
+  for (let i = 0; i < 3; i++) {
+    if (typeof data !== 'string') {
+      break
+    }
+    try {
+      data = JSON.parse(data)
+    } catch {
+      return {}
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {}
+  }
+  return data
+}
+
 export async function getGlobalData() {
-  let GlobalData
+  let GlobalData = {}
   try {
-    GlobalData = JSON.parse(localStorage.getItem('GlobalData'))
-    if (Object.prototype.toString.call(GlobalData) === '[object Array]') {
-      GlobalData = {}
-    }
-    GlobalData = await chromeSend('getGlobalData')
-    GlobalData = JSON.parse(GlobalData.data)
-    if (Object.prototype.toString.call(GlobalData) === '[object Array]') {
-      GlobalData = {}
-    }
+    GlobalData = parseGlobalDataPayload(localStorage.getItem('GlobalData'))
+    const bridge = await chromeSend('getGlobalData')
+    GlobalData = parseGlobalDataPayload(bridge && bridge.data)
   } catch {
     //
   }
 
-  return GlobalData || {}
+  return GlobalData
 }
 
 export async function setGlobalData(key, value) {
@@ -188,7 +203,9 @@ export async function addBrowser(item, defaultName) {
     if (!item.name) {
       item.name = prefix + (item.id || 'new')
     }
-    await createEnvironment(item)
+    const res = await createEnvironment(item)
+    const envId = String((res.data && res.data.id) || item.id)
+    await syncEnvCrxBindings(envId, item.crxIds || []).catch(console.warn)
     const list = await fetchListFromBackend()
     await syncListToBridge(list)
     return
@@ -207,10 +224,12 @@ export async function addBrowser(item, defaultName) {
   await chromeSend('setBrowserList', data).catch(err => {
     console.warn(err)
   })
+  await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
 }
 export async function updateBrowser(item) {
   if (getToken()) {
     await updateEnvironment(String(item.id), item)
+    await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
     const list = await fetchListFromBackend()
     await syncListToBridge(list)
     return
@@ -225,6 +244,7 @@ export async function updateBrowser(item) {
   await chromeSend('setBrowserList', data).catch(err => {
     console.warn(err)
   })
+  await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
 }
 export async function deleteBrowser(id) {
   if (getToken()) {
@@ -270,6 +290,22 @@ export async function unpackProfile(envId, zipPath) {
 
 export async function getProfileLocalMeta(envId) {
   return chromeSend('getProfileLocalMeta', envId)
+}
+
+export async function getProfileSyncStatus(envId) {
+  return chromeSend('getProfileSyncStatus', envId, 15000)
+}
+
+export async function syncProfileToCloud(envId) {
+  return chromeSend('syncProfileToCloud', envId, 120000)
+}
+
+export async function syncProfileFromCloud(envId) {
+  return chromeSend('syncProfileFromCloud', envId, 120000)
+}
+
+export async function syncEnvCrxBindings(envId, crxIds) {
+  return chromeSend('syncEnvCrxBindings', envId, crxIds || [])
 }
 
 export async function getLocalCrxList() {

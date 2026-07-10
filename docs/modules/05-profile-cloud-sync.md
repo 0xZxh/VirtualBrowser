@@ -87,8 +87,8 @@ sequenceDiagram
 
 | ID | 任务 | 验收标准 | 优先级 | 依赖模块 |
 |----|------|----------|--------|----------|
-| 5.7 | 环境列表同步状态 UI {#57} | 显示 local/cloud version、最后同步时间、失败提示 | **P0** | 2.7 |
-| 5.8 | 「立即同步」按钮 {#58} | 手动 pack+upload 或 pull+unpack | **P0** | 5.7 |
+| 5.7 | 环境列表同步状态 UI {#57} | 显示 local/cloud version、状态标签 | **P0** | ✅ |
+| 5.8 | 「立即同步」按钮 {#58} | 手动 upload / pull / 刷新 | **P0** | ✅ |
 | 5.9 | 自动 token {#59} | bridge 使用登录 Bearer；`CLOUD_API_TOKEN` 可选兜底 | **P0** | ✅ dev |
 | 5.10 | 冲突策略 UI | 云端 version 更高时提示「将覆盖本地」 | P1 | 5.7 |
 | 5.11 | 体积上限 / 增量同步 | 大 profile 分片（可选） | P4 | — |

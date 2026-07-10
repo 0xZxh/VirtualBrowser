@@ -40,6 +40,46 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8')
 }
 
+function parseGlobalDataPayload(raw) {
+  if (raw == null || raw === '') {
+    return {}
+  }
+  let data = raw
+  for (let i = 0; i < 3; i++) {
+    if (typeof data !== 'string') {
+      break
+    }
+    try {
+      data = JSON.parse(data)
+    } catch {
+      return {}
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {}
+  }
+  return data
+}
+
+function readGlobalDataFile() {
+  const raw = fs.existsSync(userDataFile) ? fs.readFileSync(userDataFile, 'utf8') : '{}'
+  const data = parseGlobalDataPayload(raw)
+  const normalized = JSON.stringify(data)
+  if (raw.trim() && raw.trim() !== normalized) {
+    ensureDir(path.dirname(userDataFile))
+    fs.writeFileSync(userDataFile, normalized, 'utf8')
+  }
+  return data
+}
+
+function writeGlobalDataFile(payload) {
+  const data = parseGlobalDataPayload(
+    typeof payload === 'string' ? payload : JSON.stringify(payload || {})
+  )
+  ensureDir(path.dirname(userDataFile))
+  fs.writeFileSync(userDataFile, JSON.stringify(data), 'utf8')
+}
+
 function syncWorkerProfiles(data) {
   const users = (data && data.users) || []
   ensureDir(workersRoot)
@@ -116,23 +156,110 @@ async function pullProfileIfNeeded(id, req) {
 async function uploadPackedSnapshot(id, zipPath, req) {
   const token = getCloudToken(req)
   if (!token) {
-    console.log('[dev-native-bridge] cloud upload skipped: 未登录且无 CLOUD_API_TOKEN')
-    return
+    throw new Error('未登录，无法上传云快照')
   }
 
-  try {
-    const meta = await cloudSync.uploadSnapshot(id, zipPath, token)
-    console.log(
-      '[dev-native-bridge] cloud upload ok: envId=',
-      id,
-      'version=',
-      meta.version,
-      'size=',
-      meta.size
-    )
-  } catch (err) {
-    console.error('[dev-native-bridge] cloud upload failed:', err.message)
+  const meta = await cloudSync.uploadSnapshot(id, zipPath, token)
+  console.log(
+    '[dev-native-bridge] cloud upload ok: envId=',
+    id,
+    'version=',
+    meta.version,
+    'size=',
+    meta.size
+  )
+  return meta
+}
+
+async function getProfileSyncStatus(id, req) {
+  const token = getCloudToken(req)
+  const workerDir = path.join(workersRoot, id)
+  const localMeta = profileSync.getProfileLocalMeta(workerDir)
+  const localCloudMeta = cloudSync.readLocalCloudMeta(id)
+
+  let cloudMeta = null
+  let cloudError = null
+  if (token) {
+    try {
+      cloudMeta = await cloudSync.getSnapshotMeta(id, token)
+    } catch (err) {
+      cloudError = err.message
+    }
+  } else {
+    cloudError = '请先登录'
   }
+
+  let status = 'unknown'
+  if (!token) {
+    status = 'no-auth'
+  } else if (cloudError && !cloudMeta) {
+    status = 'error'
+  } else if (!cloudMeta) {
+    status = localMeta.fileCount > 0 ? 'local-only' : 'no-cloud'
+  } else if (!localMeta.fileCount && !localCloudMeta) {
+    status = 'cloud-only'
+  } else if (!localCloudMeta || localCloudMeta.version == null) {
+    status = 'cloud-newer'
+  } else if (cloudMeta.version > localCloudMeta.version) {
+    status = 'cloud-newer'
+  } else if (cloudMeta.version < localCloudMeta.version) {
+    status = 'local-newer'
+  } else {
+    status = 'synced'
+  }
+
+  return {
+    envId: id,
+    localFileCount: localMeta.fileCount,
+    localVersion: localCloudMeta && localCloudMeta.version != null ? localCloudMeta.version : null,
+    localUpdatedAt: (localCloudMeta && localCloudMeta.updatedAt) || null,
+    cloudVersion: cloudMeta && cloudMeta.version != null ? cloudMeta.version : null,
+    cloudUpdatedAt: (cloudMeta && cloudMeta.updatedAt) || null,
+    status,
+    cloudError
+  }
+}
+
+async function syncProfileToCloud(id, req) {
+  const runningIds = getRunningIds()
+  if (runningIds.includes(id)) {
+    throw new Error('请先关闭该指纹浏览器再上传')
+  }
+
+  const workerDir = path.join(workersRoot, id)
+  const outDir = profileSync.getSnapshotsDir(id)
+  ensureDir(outDir)
+  const outPath = path.join(outDir, `profile-${Date.now()}.zip`)
+  const packed = profileSync.packProfile(workerDir, { outputPath: outPath })
+  const meta = await uploadPackedSnapshot(id, packed.path, req)
+  return { action: 'upload', packed, meta }
+}
+
+async function syncProfileFromCloud(id, req) {
+  const runningIds = getRunningIds()
+  if (runningIds.includes(id)) {
+    throw new Error('请先关闭该指纹浏览器再拉取')
+  }
+
+  const token = getCloudToken(req)
+  if (!token) {
+    throw new Error('请先登录')
+  }
+
+  const workerDir = path.join(workersRoot, id)
+  ensureDir(workerDir)
+  const result = await cloudSync.downloadSnapshot(id, workerDir, token)
+  if (!result) {
+    throw new Error('云端无快照')
+  }
+  return { action: 'pull', ...result }
+}
+
+function getEnvCrxIds(envId) {
+  const data = readJson(listFile, { users: [] })
+  const item = (data.users || []).find(u => String(u.id) === String(envId))
+  if (!item) return []
+  return (item.crxIds || []).map(String)
 }
 
 async function handleNativeCall(name, params = [], req) {
@@ -148,14 +275,11 @@ async function handleNativeCall(name, params = [], req) {
       return { ok: true }
     }
     case 'getGlobalData': {
-      const raw = fs.existsSync(userDataFile)
-        ? fs.readFileSync(userDataFile, 'utf8')
-        : '{}'
-      return { data: raw }
+      const data = readGlobalDataFile()
+      return { data: JSON.stringify(data) }
     }
     case 'setGlobalData': {
-      ensureDir(path.dirname(userDataFile))
-      fs.writeFileSync(userDataFile, params[0] || '{}', 'utf8')
+      writeGlobalDataFile(params[0] || '{}')
       return { ok: true }
     }
     case 'deleteBrowser': {
@@ -193,6 +317,23 @@ async function handleNativeCall(name, params = [], req) {
       const workerDir = path.join(workersRoot, id)
       return profileSync.getProfileLocalMeta(workerDir)
     }
+    case 'getProfileSyncStatus': {
+      const id = String(params[0])
+      return getProfileSyncStatus(id, req)
+    }
+    case 'syncProfileToCloud': {
+      const id = String(params[0])
+      return syncProfileToCloud(id, req)
+    }
+    case 'syncProfileFromCloud': {
+      const id = String(params[0])
+      return syncProfileFromCloud(id, req)
+    }
+    case 'syncEnvCrxBindings': {
+      const envId = String(params[0])
+      const crxIds = params[1] || []
+      return crxStore.syncEnvCrxBindings(envId, crxIds)
+    }
     case 'launchBrowser': {
       const id = String(params[0])
       if (!fs.existsSync(innerExe)) {
@@ -208,11 +349,21 @@ async function handleNativeCall(name, params = [], req) {
         cloudTokenByEnv.set(id, token)
       }
       await pullProfileIfNeeded(id, req)
-      const proc = spawn(
-        innerExe,
-        [`--worker-id=${id}`, `--user-data-dir=${workerDir}`],
-        { detached: true, stdio: 'ignore', windowsHide: false }
-      )
+
+      const extPaths = crxStore.getEnabledExtensionPathsForEnv(id, getEnvCrxIds(id))
+      const spawnArgs = [`--worker-id=${id}`, `--user-data-dir=${workerDir}`]
+      if (extPaths.length) {
+        const joined = extPaths.join(',')
+        spawnArgs.push(`--load-extension=${joined}`)
+        spawnArgs.push(`--disable-extensions-except=${joined}`)
+        console.log('[dev-native-bridge] load-extension envId=', id, 'paths=', extPaths)
+      }
+
+      const proc = spawn(innerExe, spawnArgs, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+      })
       proc.unref()
       running.set(id, proc)
       proc.on('exit', () => {

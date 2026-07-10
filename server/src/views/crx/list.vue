@@ -3,6 +3,7 @@
     <div class="filter-container">
       <div>
         <el-upload
+          v-permission="['admin', 'operator']"
           action=""
           accept=".crx,.zip"
           :auto-upload="false"
@@ -46,12 +47,22 @@
       </el-table-column>
       <el-table-column label="启用" width="90" align="center">
         <template slot-scope="{ row }">
-          <el-switch :value="row.enabled !== false" @change="val => handleToggle(row, val)" />
+          <el-switch
+            v-permission="['admin', 'operator']"
+            :value="row.enabled !== false"
+            @change="val => handleToggle(row, val)"
+          />
+          <span v-if="!canManageCrx">{{ row.enabled !== false ? '是' : '否' }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="120" align="center">
         <template slot-scope="{ row }">
-          <el-button type="danger" size="mini" @click="handleDelete(row)">
+          <el-button
+            v-permission="['admin', 'operator']"
+            type="danger"
+            size="mini"
+            @click="handleDelete(row)"
+          >
             {{ $t('browser.delete') }}
           </el-button>
         </template>
@@ -72,6 +83,12 @@ export default {
       listLoading: false,
       uploading: false,
       keyword: ''
+    }
+  },
+  computed: {
+    canManageCrx() {
+      const roles = this.$store.getters.roles || []
+      return roles.some(r => ['admin', 'operator'].includes(r))
     }
   },
   created() {

@@ -22,6 +22,7 @@
 | 05 | [profile-cloud-sync](modules/05-profile-cloud-sync.md) | 🟡 部分完成 | Cookie/缓存打包上云、跨机 pull |
 | 06 | [deployment](modules/06-deployment.md) | 🔴 未开始 | 生产构建、托管、交付物 |
 | 07 | [backend-stack](modules/07-backend-stack.md) | 🟢 基本完成 | Nest + **本地 SQLite / 生产 Mongo** |
+| 08 | [**COMPAT_API**](COMPAT_API.md) | 🔴 未开始 | **Apifox 自研 REST API 待办与逐接口验收**（跨 Agent 协作） |
 
 ---
 

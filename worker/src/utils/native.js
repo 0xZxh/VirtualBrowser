@@ -30,18 +30,36 @@ export async function chromeSend(name, ...params) {
   return Promise.race([pCall, pTimeOut(2000)])
 }
 
-export async function getGlobalData() {
-  let GlobalData
-  try {
-    GlobalData = JSON.parse(localStorage.getItem('GlobalData'))
-    GlobalData = await chromeSend('getGlobalData')
-    GlobalData = JSON.parse(GlobalData.data)
-    if (Object.prototype.toString.call(GlobalData) === '[object Array]') {
-      GlobalData = {}
+function parseGlobalDataPayload(raw) {
+  if (raw == null || raw === '') {
+    return {}
+  }
+  let data = raw
+  for (let i = 0; i < 3; i++) {
+    if (typeof data !== 'string') {
+      break
     }
+    try {
+      data = JSON.parse(data)
+    } catch {
+      return {}
+    }
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {}
+  }
+  return data
+}
+
+export async function getGlobalData() {
+  let GlobalData = {}
+  try {
+    GlobalData = parseGlobalDataPayload(localStorage.getItem('GlobalData'))
+    const bridge = await chromeSend('getGlobalData')
+    GlobalData = parseGlobalDataPayload(bridge && bridge.data)
   } catch {
     //
   }
 
-  return GlobalData || {}
+  return GlobalData
 }
