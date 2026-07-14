@@ -40,6 +40,9 @@ isProject: false
 
 # server-backend 整合 Native REST API（逐 API 交付版）
 
+> **= ACCEPTANCE 阶段 S8 执行计划**（状态真相见 [`docs/COMPAT_API.md`](../docs/COMPAT_API.md)）  
+> **Multitask：** 仅 Agent-S8 认领；INFRA-A 与 S7 共享，见 [`docs/AGENT_COORDINATION.md`](../docs/AGENT_COORDINATION.md)
+
 ## 交付原则（你已明确要求）
 
 1. **一个 API 一个 API 过**：实现 → 本机 curl/脚本验收 → 写入交付文档 → 再进入下一个。
@@ -65,9 +68,9 @@ isProject: false
 | 01  | `/api/getBrowserList`        | GET + POST | **能**       | `EnvironmentsService.listForUser` + sync 磁盘                     | POST `group` 过滤需对齐字段；响应 `data.users` 形状需对照 Apifox                                           |
 | 02  | `/api/addBrowser`            | POST       | **能（核心字段）** | `EnvironmentsService.create` + sync                             | Apifox 示例含 `chrome_version/proxy/homepage`；30+ 指纹字段首期只透传已支持字段，其余存 `payload`                 |
 | 03  | `/api/updateBrowser`         | POST       | **能（核心字段）** | `EnvironmentsService.update` + sync                             | 同 add；`id` 必填                                                                               |
-| 04  | `/api/deleteBrowser`         | POST       | **能**       | `closeBrowser` + `deleteBrowser` + `EnvironmentsService.remove` | 运行中须先 close                                                                                 |
+| 04  | `/api/deleteBrowser`         | POST       | **能**       | `stopBrowser` + `deleteBrowser` + `EnvironmentsService.remove` | 运行中须先 stop                                                                                 |
 | 05  | `/api/launchBrowser`         | POST       | **能（核心）**   | `native-runtime.launchBrowser`                                  | **需新增** `--remote-debugging-port` 与 `debuggingPort` 返回；`tempLaunchArgs` 可拼入 spawn args（需实测） |
-| 06  | `/api/closeBrowser`          | POST       | **能**       | **需新增** `closeBrowser`                                          | 当前 bridge 无此 case                                                                           |
+| 06  | `/api/stopBrowser`           | POST       | **能**       | **需新增** `stopBrowser`                                          | 当前 bridge 无此 case；**Apifox 官方路径名**                                                                           |
 | 07  | `/api/getBrowserRunningList` | GET        | **能**       | 已有 `getRuningBrowser`                                           | 路径名与 native 拼写 `Runing` 不一致，Compat 层做别名                                                     |
 | 08  | `/api/getCrxList`            | GET        | **能**       | `crx-store.getCrxList`                                          | 返回字段可能与官方略有差异，交付文档列明                                                                        |
 
@@ -176,7 +179,7 @@ flowchart LR
   A03[API-03 updateBrowser]
   A04[API-04 deleteBrowser]
   A05[API-05 launchBrowser]
-  A06[API-06 closeBrowser]
+  A06[API-06 stopBrowser]
   A07[API-07 getBrowserRunningList]
   A08[API-08 getCrxList]
   Doc[COMPAT_API.md]
@@ -195,7 +198,7 @@ flowchart LR
 
 - `allocateDebugPort()` / `releaseDebugPort()`
 - `launchBrowser` 返回 `{ ok, debuggingPort, envId }`
-- `closeBrowser(envId)`：kill + exit 钩子（pack/upload）
+- `stopBrowser(envId)`：kill + exit 钩子（pack/upload）
 
 验收：`node server/lib/__tests__/native-runtime-smoke.js`（实现时新增）或 curl dev-bridge 调 `launchBrowser` 返回 port。
 
@@ -269,7 +272,7 @@ flowchart LR
 | ---- | ---------------------------------------------------------------------------- |
 | 路径   | `POST /api/deleteBrowser`                                                    |
 | Body | `{ id: integer }`                                                            |
-| 实现   | 若运行中先 `closeBrowser` → `native deleteBrowser` → `EnvironmentsService.remove` |
+| 实现   | 若运行中先 `stopBrowser` → native deleteBrowser → `EnvironmentsService.remove` |
 | 响应   | `{ success: true }`                                                          |
 | 验收   | 删除后 list 无此项；重复删除返回明确错误                                                      |
 
@@ -291,14 +294,14 @@ flowchart LR
 
 ---
 
-### API-06 `closeBrowser`
+### API-06 `stopBrowser`
 
 
 | 项    | 内容                                       |
 | ---- | ---------------------------------------- |
-| 路径   | `POST /api/closeBrowser`                 |
+| 路径   | `POST /api/stopBrowser`（**Apifox 官方名**） |
 | Body | `{ id }`                                 |
-| 实现   | `native-runtime.closeBrowser`            |
+| 实现   | `native-runtime.stopBrowser`            |
 | 响应   | `{ success: true }`                      |
 | 验收   | 关闭后 `getBrowserRunningList` 不含该 id；进程不存在 |
 
@@ -313,7 +316,7 @@ flowchart LR
 | 路径  | `GET /api/getBrowserRunningList`                                                 |
 | 实现  | `getRuningBrowser` + 与当前用户 env 求交（不能泄露他人 running id）                             |
 | 响应  | `{ success: true, data: { ids: [...] } }`（具体字段以实现时 Apifox/实测为准，写入 COMPAT_API.md） |
-| 验收  | launch 后可见；close 后不可见                                                            |
+| 验收  | launch 后可见；stop 后不可见                                                            |
 
 
 ---

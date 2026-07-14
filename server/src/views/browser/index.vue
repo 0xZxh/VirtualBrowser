@@ -107,7 +107,7 @@
       <el-table-column label="代理" width="300px">
         <template slot-scope="{ row }">
           <span>
-            <template v-if="row.proxy.mode === 0">默认</template>
+            <template v-if="!row.proxy || row.proxy.mode === 0">默认</template>
             <template v-else-if="row.proxy.mode === 1">不使用代理</template>
             <template v-else>
               {{ row.proxy.protocol }}
@@ -1238,14 +1238,21 @@ export default {
   methods: {
     async getList() {
       this.listLoading = true
-      this.list = await getBrowserList()
-      this.GlobalData = await getGlobalData()
-      this.apiLink = this.GlobalData.apiLink || ''
-      this.Channel = this.GlobalData.Channel || ''
-      this.processUpdateData()
-      await updateRuningState()
-      this.listLoading = false
-      this.loadSyncStatuses()
+      try {
+        this.list = await getBrowserList()
+        this.GlobalData = await getGlobalData()
+        this.apiLink = this.GlobalData.apiLink || ''
+        this.Channel = this.GlobalData.Channel || ''
+        await this.processUpdateData()
+        await updateRuningState()
+        this.loadSyncStatuses()
+      } catch (err) {
+        console.error('[browser] getList failed:', err)
+        this.list = this.list || []
+        this.$message.error((err && err.message) || '加载浏览器列表失败')
+      } finally {
+        this.listLoading = false
+      }
     },
     async loadSyncStatuses() {
       await Promise.all(
@@ -1548,7 +1555,23 @@ export default {
     processData(data) {
       let changed = false
 
-      const { proxy, ua, chrome_version } = data
+      const proxy = data.proxy || { mode: 0, value: '' }
+      const ua = data.ua || { mode: 0, value: '' }
+      let chrome_version = data.chrome_version
+      if (chrome_version == null || chrome_version === '') {
+        chrome_version = '默认'
+        data.chrome_version = chrome_version
+        changed = true
+      }
+      if (typeof ua.value !== 'string') {
+        ua.value = ua.value != null ? String(ua.value) : ''
+        changed = true
+      }
+      data.proxy = proxy
+      data.ua = ua
+      if (!data['sec-ch-ua'] || typeof data['sec-ch-ua'] !== 'object') {
+        data['sec-ch-ua'] = { mode: 0, value: [] }
+      }
       if (proxy.mode === 2) {
         let oldProxy = proxy.value
         if (oldProxy && !proxy.host) {
@@ -1590,8 +1613,11 @@ export default {
         changed = true
       }
       if (data['ua-full-version'] === undefined) {
-        const chrome_version_num = chrome_version === '默认' ? chromiumCoreVer : chrome_version
-        const chromeVer = Versions.find(item => Number(item.split('.')[0]) === chrome_version_num)
+        const chrome_version_num =
+          chrome_version === '默认' ? chromiumCoreVer : Number(chrome_version) || chromiumCoreVer
+        const chromeVer =
+          Versions.find(item => Number(item.split('.')[0]) === chrome_version_num) ||
+          `${chrome_version_num}.0.0.0`
         data['ua-full-version'] = {
           mode: 1,
           value: getUaFullVersion(uaFullVersions, chromeVer)

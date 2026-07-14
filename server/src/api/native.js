@@ -112,6 +112,48 @@ export async function setGlobalData(key, value) {
   await chromeSend('setGlobalData', JSON.stringify(GlobalData)).catch(console.warn)
 }
 
+function asBrowserListArray(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+  }
+  if (raw && Array.isArray(raw.users)) {
+    return raw.users
+  }
+  return []
+}
+
+function normalizeEnvironmentItem(item) {
+  if (!item || typeof item !== 'object') {
+    return item
+  }
+
+  const ua =
+    item.ua && typeof item.ua === 'object'
+      ? {
+          ...item.ua,
+          value: item.ua.value != null ? String(item.ua.value) : ''
+        }
+      : { mode: 0, value: '' }
+
+  return {
+    ...item,
+    chrome_version: item.chrome_version != null && item.chrome_version !== '' ? item.chrome_version : '默认',
+    proxy:
+      item.proxy && typeof item.proxy === 'object'
+        ? item.proxy
+        : { mode: 0, value: '', protocol: 'HTTP', host: '', port: '', user: '', pass: '', API: '' },
+    ua,
+    'sec-ch-ua':
+      item['sec-ch-ua'] && typeof item['sec-ch-ua'] === 'object'
+        ? item['sec-ch-ua']
+        : { mode: 0, value: [] }
+  }
+}
+
+function normalizeBrowserList(list) {
+  return asBrowserListArray(list).map(normalizeEnvironmentItem)
+}
+
 async function syncListToBridge(list) {
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
@@ -120,7 +162,7 @@ async function syncListToBridge(list) {
 
 async function fetchListFromBackend() {
   const res = await fetchEnvironments()
-  return res.data || []
+  return normalizeBrowserList(res.data || [])
 }
 
 let legacyMigrateDone = false
@@ -146,7 +188,7 @@ async function maybeMigrateLegacyEnvironments(backendList) {
   if (!localItems.length) {
     try {
       const bridge = await chromeSend('getBrowserList')
-      localItems = (bridge && bridge.data && bridge.data.users) || (bridge && bridge.data) || []
+      localItems = asBrowserListArray((bridge && bridge.data) || bridge)
     } catch {
       //
     }
@@ -182,20 +224,28 @@ export async function getBrowserList() {
   if (getToken()) {
     let list = await fetchListFromBackend()
     list = await maybeMigrateLegacyEnvironments(list)
+    list = normalizeBrowserList(list)
     await syncListToBridge(list)
     return list
   }
 
   let list
   try {
-    list = JSON.parse(localStorage.getItem('list'))
     list = await chromeSend('getBrowserList')
-    list = list.data
+    list = list && list.data
   } catch {
     //
   }
 
-  return (list && list.users) || []
+  if (!list) {
+    try {
+      list = JSON.parse(localStorage.getItem('list'))
+    } catch {
+      //
+    }
+  }
+
+  return normalizeBrowserList(list)
 }
 export async function addBrowser(item, defaultName) {
   if (getToken()) {

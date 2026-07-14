@@ -17,7 +17,7 @@
 | 环境数据 | 本地 json 全员可见 | `ownerId`/`tenantId` + backend 过滤 |
 | 云同步 | 手动 `CLOUD_API_TOKEN` | **登录 token 自动** + 同步状态 UI |
 | 插件 | 列表 MVP，启动未注入 | 环境绑定 + **launch 加载** + 权限 |
-| 部署 | dev 三板斧 | **生产文档 + 托管 + native 代理** |
+| 部署 | dev 三板斧 | **客户端 exe（S7）+ 云端 API（S6）+ Compat :9000（S8）** |
 
 **后端统一入口：** [`server-backend/`](../server-backend/)（Auth、用户、角色、环境元数据、Profile 快照、未来 CRX 元数据 API）。  
 **存储：** 本地开发 `STORAGE_DRIVER=local`（SQLite，见 [07-backend-stack](modules/07-backend-stack.md)）；**生产交付必须 `STORAGE_DRIVER=mongo`**。  
@@ -57,7 +57,16 @@
 ### 01 UI + 06 部署
 
 - [ ] staging/prod 环境变量与文档一致
-- [ ] 交付物清单、Nginx/托管、worker deploy、禁止 app.asar 检查项
+- [ ] **S6 云端：** `CLOUD_DEPLOY.md`、Mongo、HTTPS、CORS
+- [ ] **S7 客户端：** Setup.exe、desktop-shell、禁止恢复 app.asar
+- [ ] worker deploy、交付检查清单
+
+### 08 COMPAT API（S8）
+
+- [ ] INFRA-A `native-runtime.js` 单源（dev + desktop + compat 共用）
+- [ ] 第一期 API-01–08 逐接口验收（见 [COMPAT_API.md](COMPAT_API.md)）
+- [ ] `automation/test-api.js` 对 `:9000` launchBrowser CDP 成功
+- [ ] BLOCK 项保持 blocked，不虚假标 done
 
 ---
 
@@ -70,20 +79,26 @@ flowchart LR
   S3["S3: 2.7+5.9 token衔接"]
   S4["S4: 5.7-5.8 同步UI"]
   S5["S5: 4.6-4.7 CRX注入"]
-  S6["S6: 6.x 生产部署"]
+  S6["S6: 云端部署"]
+  S7["S7: 客户端安装包"]
+  S8["S8: COMPAT API"]
   S1 --> S2 --> S3 --> S4
   S2 --> S5
   S4 --> S6
+  S6 --> S7
+  S4 --> S8
 ```
 
-| 阶段 | 任务 ID（详见各模块文档） | 交付物 |
-|------|---------------------------|--------|
-| S1 | 2.4, 2.5, 2.6, **2.10–2.12** | DB + 用户管理 UI + 登出闭环 |
-| S2 | 3.4, 3.5, 3.6, 3.8, **3.10–3.11** | 环境与快照租户隔离 + API 鉴权 |
-| S3 | 2.7, 5.9 | 云同步与登录同一 token |
-| S4 | 5.7, 5.8, 5.10, 5.12 | 同步状态可观测、可操作 |
-| S5 | 4.6, 4.7, 4.8, 4.10 | 插件可绑定、可启动加载 |
-| S6 | 6.1–6.9 | 可重复生产安装 |
+| 阶段 | 任务 ID | 交付物 |
+|------|-----------|--------|
+| S1 | 2.4–2.6, 2.10–2.12 | DB + 用户管理 UI |
+| S2 | 3.4–3.8, 3.13–3.14 | 环境/快照隔离 |
+| S3 | 2.7, 5.9 | 云同步 token |
+| S4 | 5.7–5.8 | 同步 UI |
+| S5 | 4.6–4.7 | CRX 注入 |
+| **S6** | 6.1–6.9 | 云端 Mongo + HTTPS |
+| **S7** | desktop-shell, NSIS | 客户端 Setup.exe |
+| **S8** | COMPAT INFRA + API-01–08 | Apifox REST :9000 |
 
 ---
 
@@ -100,5 +115,7 @@ flowchart LR
 | 模块 | 文档 |
 |------|------|
 | 登录 + 用户管理 | [02-auth-login](modules/02-auth-login.md) |
-| RBAC + 系统管理 | [03-rbac-permissions](modules/03-rbac-permissions.md) |
+| RBAC | [03-rbac-permissions](modules/03-rbac-permissions.md) |
+| COMPAT API（S8） | [COMPAT_API](COMPAT_API.md) |
+| Multitask | [AGENT_COORDINATION](AGENT_COORDINATION.md) |
 | 衔接 | [INTEGRATION](INTEGRATION.md) |

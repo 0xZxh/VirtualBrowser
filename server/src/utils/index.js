@@ -389,19 +389,23 @@ export function genUserAgent(osVer, chromeVer) {
 }
 
 export function getUaFullVersion(uaFullVersions, chromeVer) {
-  const val = Number(chromeVer.split('.')[0])
-
-  const matchingFullVersions = uaFullVersions.filter(item => Number(item.split('.')[0]) === val)
-
-  let uaFullVersion
-  if (matchingFullVersions.length > 0) {
-    const randomIndex = Math.floor(Math.random() * matchingFullVersions.length)
-    uaFullVersion = matchingFullVersions[randomIndex]
-  } else {
-    uaFullVersion = chromeVer
+  if (!chromeVer || typeof chromeVer !== 'string') {
+    return chromeVer != null ? String(chromeVer) : ''
   }
 
-  return uaFullVersion
+  const versions = Array.isArray(uaFullVersions) ? uaFullVersions : []
+  const val = Number(chromeVer.split('.')[0])
+
+  const matchingFullVersions = versions.filter(
+    item => item && Number(String(item).split('.')[0]) === val
+  )
+
+  if (matchingFullVersions.length > 0) {
+    const randomIndex = Math.floor(Math.random() * matchingFullVersions.length)
+    return matchingFullVersions[randomIndex]
+  }
+
+  return chromeVer
 }
 
 const allVoicesObtained = () =>

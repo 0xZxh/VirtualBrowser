@@ -1,0 +1,5 @@
+staging/
+staging-*/
+staging.orphan-*/
+output/
+build-client-last.log

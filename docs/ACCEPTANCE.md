@@ -1,8 +1,9 @@
 # 分阶段验收记录
 
-> **最后更新：** 2026-07-07（S2/S3 通过，S4 待验收，S5 开发完成待验收）
+> **最后更新：** 2026-07-14（S7 Setup 已产出；doc-sync-2 进度对齐）
 > **交付基线：** [DELIVERY_STANDARD.md](DELIVERY_STANDARD.md)  
-> **用途：** 各阶段验收步骤 + 验收人勾选进度 + 问题记录
+> **用途：** 各阶段验收步骤 + 验收人勾选进度 + 问题记录  
+> **Multitask：** 认领见 [AGENT_COORDINATION.md](AGENT_COORDINATION.md)；Agent 报告见 [acceptance-reports/](acceptance-reports/)
 
 ---
 
@@ -26,7 +27,6 @@
 ---
 
 
-
 ## 总进度一览
 
 
@@ -35,9 +35,11 @@
 | **S1** | 登录 + 用户管理 + 登出 + 持久化 | ✅ **基本通过** | 2026-07-05 验收人确认：登录/登出/角色/用户管理/持久化基本正常 |
 | **S2** | 环境归属 + 快照 403 + 分配浏览器 | ✅ **通过** | 2026-07-07 验收人确认功能测试正常 |
 | **S3** | 登录 token → 云同步       | ✅ **通过** | 与 S2 一并验收；launch 自动 upload/pull |
-| **S4** | 同步状态 UI + 立即同步       | 🟡 **待验收** | 2026-07-07 开发完成 |
-| **S5** | CRX 绑定 + launch 注入   | 🟡 **待验收** | 2026-07-07 开发完成 |
-| **S6** | 生产部署                 | ⬜ 未开始      | —                           |
+| **S4** | 同步状态 UI + 立即同步       | ✅ **通过** | 2026-07-11 Agent-Verify；见 `acceptance-reports/S4-2026-07-11.md` |
+| **S5** | CRX 绑定 + launch 注入   | ✅ **基本通过** | 2026-07-11 Agent-Verify；chrome://extensions 待用户目视；见 `S5-2026-07-11.md` |
+| **S6** | 云端部署（Mongo + HTTPS + CLOUD_DEPLOY） | 🟢 **HTTP mongo 验收通过，HTTPS 待运维** | 2026-07-12 S6-prod：mongo 模式 health/login/创建环境 OK；HTTPS 待云服务器 |
+| **S7** | 客户端安装包（desktop-shell + NSIS） | 🟡 **Setup 已产出，实机/生产待验** | 2026-07-14 S7-build：`VirtualBrowser-Setup-0.1.0.exe`；CloudApiBase 本地临时 |
+| **S8** | COMPAT API 第一期（INFRA + API-01–08） | 🟡 **基本通过** | 2026-07-12 E2E：addBrowser→launch→stop 全链通过；见 `E2E-2026-07-12.md` |
 
 
 **图例：** ⬜ 未开始 · 🟡 进行中 · ✅ 通过 · ❌ 未通过
@@ -299,12 +301,14 @@ curl.exe -s http://127.0.0.1:3001/api/profiles/<envId>/snapshot/meta -H "Authori
 
 | 检查项 | 通过 |
 |--------|------|
-| 列表显示同步状态 | ☐ |
-| 手动上传成功 | ☐ |
-| 手动拉取成功 | ☐ |
-| viewer 无同步按钮 | ☐ |
+| 列表显示同步状态 | ☑ |
+| 手动上传成功 | ☑ |
+| 手动拉取成功 | ☑ |
+| viewer 无同步按钮 | ☑ |
 
-**S4 阶段结论：** ☐ 通过 · ☐ 未通过 · ☑ 待验收
+**S4 阶段结论：** ☑ 通过 · ☐ 未通过 · ☐ 进行中
+
+> **2026-07-11** Agent-Verify：API + 终端日志验收通过；详见 [`acceptance-reports/S4-2026-07-11.md`](acceptance-reports/S4-2026-07-11.md)。
 
 ---
 
@@ -320,26 +324,113 @@ curl.exe -s http://127.0.0.1:3001/api/profiles/<envId>/snapshot/meta -H "Authori
 
 | 检查项 | 通过 |
 |--------|------|
-| 环境表单可绑定插件 | ☐ |
-| 保存后 crx-list 绑定正确 | ☐ |
-| launchBrowser 加载扩展 | ☐ |
-| viewer 无插件上传/删除 | ☐ |
+| 环境表单可绑定插件 | ☑ |
+| 保存后 crx-list 绑定正确 | ☑ |
+| launchBrowser 加载扩展 | ☑ |
+| viewer 无插件上传/删除 | ☑ |
 
-**S5 阶段结论：** ☐ 通过 · ☐ 未通过 · ☑ 待验收
+**S5 阶段结论：** ☑ 基本通过 · ☐ 未通过 · ☐ 进行中
 
----
-
-## S3 — 登录 token 云同步（2.7、5.9）（归档）
+> **2026-07-11** Agent-Verify：4 项必检通过；`chrome://extensions` 目视待用户补验。详见 [`acceptance-reports/S5-2026-07-11.md`](acceptance-reports/S5-2026-07-11.md)。
 
 ---
 
-## S6 — 生产部署（6.1–6.9）⬜ 未开发
+## S6 — 云端部署（6.1–6.9、CLOUD_DEPLOY.md）
+
+### 验收步骤
+
+1. 按 [`CLOUD_DEPLOY.md`](CLOUD_DEPLOY.md) 部署 `server-backend`
+2. `STORAGE_DRIVER=mongo` + `MONGODB_URI` 可连
+3. `GET https://<api-domain>/health` → `ok: true`
+4. 管理 API 登录、用户、环境、快照 API 经 HTTPS 可达
+5. CORS 允许客户端/Electron 来源（或约定 origin）
+6. 多客户端可同时连接同一云端
+
+| 检查项 | 通过 |
+|--------|------|
+| CLOUD_DEPLOY.md 可重复部署 | ☑ |
+| Mongo 持久化用户/环境 | ☑ |
+| HTTPS health 正常 | ☐ |
+| 登录 + 创建环境 API 正常 | ☑ |
+| CORS 配置正确 | ☑ |
+
+**S6 阶段结论：** ☑ **HTTP 内网 mongo 验收通过** · ☐ 未通过 · ☐ 进行中
+
+> **2026-07-11** Agent-S6：CLOUD_DEPLOY.md + CORS 代码就绪。  
+> **2026-07-12** Agent-E2E：本地 dev API（`:3001`）登录 admin、创建环境通过；Mongo + HTTPS 生产部署未执行。详见 [`acceptance-reports/E2E-2026-07-12.md`](acceptance-reports/E2E-2026-07-12.md)。  
+> **2026-07-12** Agent-S6-Prod：`STORAGE_DRIVER=mongo` 实机验收通过（health/login/创建环境/CORS/持久化）；**HTTP 内网验收通过，HTTPS 待运维**。详见 [`acceptance-reports/S6-prod-2026-07-12.md`](acceptance-reports/S6-prod-2026-07-12.md)。
+> **2026-07-12** Agent-S7-Build：`electron/dist`、`packaging/staging` 验证通过；`makensis` 未安装，无 Setup.exe；云端占位 `https://your-api.example.com`。详见 [`acceptance-reports/S7-build-2026-07-12.md`](acceptance-reports/S7-build-2026-07-12.md)。
+
+---
+
+## S7 — 客户端安装包（desktop-shell + NSIS）
+
+### 验收步骤
+
+1. 运行 `VirtualBrowser-Setup-x.x.x.exe` 完成安装
+2. 桌面快捷方式启动 → **独立桌面窗口**（非系统浏览器标签）
+3. 登录**云端** API（非 localhost dev）
+4. 创建环境 → 启动 → 弹出指纹浏览器窗口
+5. 关闭管理窗口后行为符合预期（托盘或一并退出，按产品定夺）
+6. 卸载后 `%LOCALAPPDATA%\VirtualBrowser\` 用户数据保留
+
+| 检查项 | 通过 |
+|--------|------|
+| 安装包可安装 | ☐ |
+| 桌面窗口启动 | ☐ |
+| 登录云端成功 | ☐ |
+| 创建/启动指纹环境 | ☐ |
+| 卸载保留用户数据 | ☐ |
+| build-client staging（Chrome-bin + dist + client.json） | ☑ |
+| desktop-shell smoke | ☑ |
+| packaging/output Setup.exe | ☑ |
+
+**S7 阶段结论：** ☐ 通过 · ☐ 未通过 · 🟡 **Setup.exe 已产出；登录云端/启动环境待实机（CloudApiBase 现为本地 http://127.0.0.1:3001）**
+
+> **2026-07-11** Agent-S7：desktop-shell + packaging 脚本就绪；smoke 通过。  
+> **2026-07-12** Agent-E2E：`native-runtime` / desktop-shell smoke 通过；`build-client.ps1` 因缺 NSIS（`makensis`）与 Electron dist 未生成 Setup.exe；Electron 窗口与安装包路径未验证。详见 [`acceptance-reports/E2E-2026-07-12.md`](acceptance-reports/E2E-2026-07-12.md)、[`acceptance-reports/S7-2026-07-11.md`](acceptance-reports/S7-2026-07-11.md)。
+
+> **2026-07-14** Agent-S7-Build：`makensis` v3.12（`D:\NSIS`，已加 User PATH）；`packaging/output/VirtualBrowser-Setup-0.1.0.exe` 已生成；`config/client.json` 的 `cloudApiBase=http://127.0.0.1:3001`（本地临时，生产 HTTPS 待定）。详见 [`acceptance-reports/S7-build-2026-07-14.md`](acceptance-reports/S7-build-2026-07-14.md)。
+> **2026-07-14（补）** 修复安装后缺 `adm-zip`：`build-client.ps1` 现将 `server/node_modules/adm-zip` 纳入 staging 并做 require 校验；已重打 Setup。见同报告「追加备注」。
+---
 
 
-| 检查项            | 通过  |
-| -------------- | --- |
-| 生产构建与托管文档可重复安装 | ☐   |
+## S8 — COMPAT API 第一期（模块 08）
 
+> **逐 API 规格与状态：** [`COMPAT_API.md`](COMPAT_API.md)（任务真相）  
+> **执行计划：** [`.cursor/plans/backend_native_api_整合_9545f4b9.plan.md`](../.cursor/plans/backend_native_api_整合_9545f4b9.plan.md)
+
+### S8-1 前置 INFRA（INFRA-A + INFRA-B + INFRA-C）
+
+| 检查项 | 通过 |
+|--------|------|
+| `native-runtime.js` 存在；dev UI 仍可启动环境 | ☑ |
+| `launchBrowser` 返回 `debuggingPort` | ☑ |
+| `stopBrowser(envId)` 可 kill 并触发 pack 钩子 | ☑ |
+| 种子 api-key；无 key → 401 | ☑ |
+| `curl :9000/api/getBrowserList` 可达 | ☑ |
+
+### S8-2 第一期 8 API（严格串行，详见 COMPAT_API.md）
+
+| 检查项 | 通过 |
+|--------|------|
+| API-01 getBrowserList GET+POST + RBAC | ☑ |
+| API-02 addBrowser → virtual.dat 存在 | ☑ |
+| API-03 updateBrowser | ☑ |
+| API-04 deleteBrowser | ☑ |
+| API-05 launchBrowser → `automation/test-api.js` CDP 成功 | ☐ |
+| API-06 **stopBrowser**（非 closeBrowser） | ☑ |
+| API-07 getBrowserRunningList | ☑ |
+| API-08 getCrxList | ☑ |
+
+**S8 阶段结论：** ☐ 通过 · ☐ 未通过 · ☑ **基本通过**
+
+> **2026-07-11** Agent-S8：INFRA + API-01..08 代码完成；`automation/test-api.js` 在 Agent-S8 环境通过。  
+> **2026-07-12** Agent-E2E：`addBrowser(id=4)` → `launchBrowser` → `stopBrowser` 全链通过；历史 env `id=1` launch 报 CDP 端口未就绪；API-05 Playwright 未在本轮复验。详见 [`acceptance-reports/E2E-2026-07-12.md`](acceptance-reports/E2E-2026-07-12.md)、[`COMPAT_API.md`](COMPAT_API.md)。
+
+---
+
+## 归档：重复 S3 节（已合并至上文 S3）
 
 ---
 
@@ -374,9 +465,10 @@ curl.exe -s http://127.0.0.1:3001/api/profiles/<envId>/snapshot/meta -H "Authori
 
 ## 相关文档
 
+- [AGENT_COORDINATION.md](AGENT_COORDINATION.md) — Multitask 认领
+- [acceptance-reports/README.md](acceptance-reports/README.md) — 验收报告索引
 - [DELIVERY_STANDARD.md](DELIVERY_STANDARD.md) — 标准可交付清单
 - [INTEGRATION.md](INTEGRATION.md) — 跨模块衔接
-- [modules/02-auth-login.md](modules/02-auth-login.md) — 登录与用户管理
-- [modules/03-rbac-permissions.md](modules/03-rbac-permissions.md) — RBAC 与环境隔离
-- [modules/05-profile-cloud-sync.md](modules/05-profile-cloud-sync.md) — 云同步
+- [COMPAT_API.md](COMPAT_API.md) — S8 逐 API
+- [modules/08-compat-api.md](modules/08-compat-api.md) — 模块 08 索引
 

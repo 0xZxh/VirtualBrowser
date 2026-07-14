@@ -4,9 +4,20 @@ import { HttpExceptionFilter } from './common/http-exception.filter'
 import { getLocalStorageKind, getStorageDriver } from './storage/storage.config'
 import * as express from 'express'
 
+/** 生产 CORS：CORS_ORIGINS 逗号分隔；未设或 `*` 则允许任意来源（与 dev 一致） */
+function getCorsOptions(): { origin: boolean | string[]; credentials: boolean } {
+  const raw = process.env.CORS_ORIGINS?.trim()
+  if (!raw || raw === '*') {
+    return { origin: true, credentials: true }
+  }
+  const origins = raw.split(',').map((s) => s.trim()).filter(Boolean)
+  return { origin: origins.length > 0 ? origins : true, credentials: true }
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false })
-  app.enableCors()
+  const corsOptions = getCorsOptions()
+  app.enableCors(corsOptions)
   app.useGlobalFilters(new HttpExceptionFilter())
 
   app.use((req, res, next) => {
@@ -35,6 +46,13 @@ async function bootstrap() {
   } else {
     console.log(`[server-backend] MONGODB_URI=${process.env.MONGODB_URI || 'default'}`)
   }
+  const corsLabel =
+    corsOptions.origin === true
+      ? '*'
+      : Array.isArray(corsOptions.origin)
+        ? corsOptions.origin.join(', ')
+        : String(corsOptions.origin)
+  console.log(`[server-backend] CORS_ORIGINS=${corsLabel}`)
   console.log('[server-backend] 种子用户: admin/admin123, operator/operator123, viewer/viewer123')
 }
 

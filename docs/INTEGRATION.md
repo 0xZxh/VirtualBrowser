@@ -1,6 +1,6 @@
 # 跨模块衔接清单
 
-> **最后更新：** 2026-07-05  
+> **最后更新：** 2026-07-11  
 > **交付基线：** [DELIVERY_STANDARD.md](DELIVERY_STANDARD.md) — 以下衔接缺口均须在标准可交付前关闭。  
 > **用途：** 唯一存放「模块 A 输出 → 模块 B 输入」对接说明的地方。各模块文档 §7 仅链接到本节锚点。
 
@@ -17,7 +17,12 @@
 | [Auth→Bridge](#auth-bridge) | [02 登录](modules/02-auth-login.md) | [00 Bridge](modules/00-native-bridge.md) | cloud 用 Bearer；bridge 本身仍开放 | 0.4, 0.1 |
 | [Users→RBAC UI](#users-rbac-ui) | [02 登录](modules/02-auth-login.md) | [03 权限](modules/03-rbac-permissions.md) | ✅ `/system/users` + `/api/users` | — |
 | [Envs→Backend](#envs-backend) | [03 权限](modules/03-rbac-permissions.md) | [00 Bridge](modules/00-native-bridge.md) | ✅ backend 权威 + bridge 同步 | 0.6 生产 |
-| [Deploy→All](#deploy-all) | [06 部署](modules/06-deployment.md) | 全部 | 生产未文档化 | 6.1–6.9 |
+| [Deploy→All](#deploy-all) | [06 部署](modules/06-deployment.md) | 全部 | S6/S7 规划中 | 6.1–6.9, 7.x |
+| [Compat→NativeRT](#compat-nativert) | [08 COMPAT](COMPAT_API.md) | native-runtime | INFRA-A pending | INFRA-A |
+| [Compat→Envs](#compat-envs) | [03 权限](modules/03-rbac-permissions.md) | BrowserService :9000 | INFRA-C pending | INFRA-C |
+| [Compat→Automation](#compat-automation) | API-05 | [automation/test-api.js](../automation/test-api.js) | pending | API-05 |
+| [NativeRT→Desktop](#nativert-desktop) | INFRA-A | [S7 desktop-shell](../.cursor/plans/客户端安装包交付_33a8c0a6.plan.md) | 共享 pending | INFRA-A |
+| [Deploy→Client](#deploy-client) | S6 云端 API | S7 client.json | pending | 6.x, 7.x |
 
 ---
 
@@ -269,4 +274,41 @@ setBrowserList / launchBrowser → bridge 带 user context 或先调 backend
 - [x] 登录后云同步 **无需** 手动 `CLOUD_API_TOKEN`（dev）  
 - [ ] 环境绑定 CRX → 启动后扩展可见  
 - [ ] A 机 Cookie → B 机同 tenant 用户恢复登录态  
-- [ ] 生产部署文档可重复安装
+- [ ] 生产部署文档可重复安装（S6/S7）
+- [ ] S8 COMPAT API-01–08 验收通过
+
+---
+
+## Compat→NativeRT {#compat-nativert}
+
+**目标：** S8 Compat API 与 dev-bridge、S7 desktop-shell 共用 `server/lib/native-runtime.js`（INFRA-A）。
+
+**待办：** INFRA-A 由 Agent-Infra-A 单独实现；S8 只 import，不重复实现。
+
+---
+
+## Deploy→Client {#deploy-client}
+
+**目标：** S7 客户端 `client.json` 或构建时注入 S6 云端 `VUE_APP_BASE_API` HTTPS 基址。
+
+**待办：** S6 提供稳定 API 域名后，S7 build 流水线写入配置。
+
+---
+
+## NativeRT→Desktop {#nativert-desktop}
+
+**目标：** S7 desktop-shell 主进程调用 INFRA-A 产出的 `native-runtime.js`，preload 注入 `chrome.send`。
+
+**依赖：** INFRA-A done。
+
+---
+
+## Compat→Envs {#compat-envs}
+
+**目标：** `:9000` BrowserService 鉴权后调用 `EnvironmentsService.listForUser` 等，与模块 03 RBAC 一致。
+
+---
+
+## Compat→Automation {#compat-automation}
+
+**目标：** API-05 `launchBrowser` 返回 `debuggingPort`，[`automation/test-api.js`](../automation/test-api.js) Playwright CDP 验收通过。

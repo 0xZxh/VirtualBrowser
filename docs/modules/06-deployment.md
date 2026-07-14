@@ -1,56 +1,77 @@
 # 模块 06 — 生产部署与交付
 
-> **状态：** 🔴 标准可交付必做  
+> **状态：** 🟡 S6 mongo HTTP ✅ · S7 Setup-0.1.0.exe ✅ · HTTPS/实机待验  
 > **交付基线：** [DELIVERY_STANDARD.md](../DELIVERY_STANDARD.md)  
-> **最后更新：** 2026-07-04
+> **最后更新：** 2026-07-14  
+> **报告：** [S6-prod](../acceptance-reports/S6-prod-2026-07-12.md) · [S7-build](../acceptance-reports/S7-build-2026-07-14.md)
 
 ## 1. 目标与边界
 
+**三条交付线：**
+
+| 线 | 验收阶段 | 产物 |
+|----|----------|------|
+| **dev** | 日常开发 | `npm run dev` + dev-native-bridge（不变） |
+| **云端** | S6 | `server-backend` + Mongo + HTTPS + [`CLOUD_DEPLOY.md`](../CLOUD_DEPLOY.md) |
+| **客户端** | S7 | `VirtualBrowser-Setup.exe`（`desktop-shell/` + NSIS） |
+
 **负责：**
 
-- 路线 B 生产交付物清单（内核 + 静态 UI + backend + 配置）
-- 构建与环境变量（dev / staging / prod）
-- 静态资源托管与 API 反向代理
-- native 能力在生产环境的代理方案
-- worker 新标签页部署纳入交付流程
+- S6：云端 API 部署、环境变量、CORS、Profile 存储路径
+- S7：Electron 桌面壳、内嵌 `server/dist`、捆绑 Chrome-bin、构建流水线
+- worker 新标签页纳入交付；`native-runtime.js` 与 S8 共享（见 INFRA-A）
 
 **不负责：**
 
-- 功能业务逻辑实现（见各模块 00–05）
-- Mac/Linux 客户端（Mission 范围外）
+- 功能业务逻辑（见模块 00–05、08）
+- Mac/Linux 客户端
 
-**红线：** **禁止** 恢复 `app.asar`、`npm run app`、外层 Electron 管理壳。
+**红线：** **禁止** 恢复原厂 `app.asar`、`npm run app`。**允许** 新建 `desktop-shell/` 二开 Electron。
 
 ---
 
-## 2. 架构与数据流（目标生产态）
+## 2. 架构（dev + 客户交付）
 
 ```mermaid
 flowchart TB
-  User[用户浏览器]
-  Nginx[Nginx / 反向代理]
-  Static[server/dist 静态 UI]
-  Backend[server-backend]
-  NativeProxy[Native 代理服务]
-  Kernel[Chrome-bin 146.x]
+  subgraph dev [dev路线B]
+    DevUI[localhost_9527]
+    DevBridge[dev-native-bridge]
+    DevUI --> DevBridge
+  end
 
-  User --> Nginx
-  Nginx --> Static
-  Nginx --> Backend
-  Nginx --> NativeProxy
-  NativeProxy --> Kernel
-  Backend --> DataDir[data/profiles + users DB]
+  subgraph client [S7客户端]
+    Setup[Setup.exe]
+    Shell[desktop-shell]
+    Setup --> Shell
+  end
+
+  subgraph cloud [S6云端]
+    Nginx[Nginx_HTTPS]
+    Backend[server-backend_Mongo]
+    Nginx --> Backend
+  end
+
+  subgraph local [本机]
+    NativeRT[native-runtime.js]
+    Kernel[VirtualBrowser.exe]
+  end
+
+  DevBridge --> NativeRT
+  Shell --> NativeRT
+  Shell --> Nginx
+  NativeRT --> Kernel
+  Backend --> Mongo[(MongoDB)]
 ```
 
 **dev 与生产差异：**
 
-| 项 | dev | 生产（目标） |
-|----|-----|--------------|
-| UI | webpack :9527 | `dist/` 静态文件 |
-| API | proxy `/dev-api` → :3001 | Nginx `/api` → backend |
-| Native | webpack 内 `/dev-native-bridge` | sidecar 或 backend 代理 |
-| **后端存储** | **`STORAGE_DRIVER=local`**（SQLite，`data/local/app.db`） | **`STORAGE_DRIVER=mongo`** + `MONGODB_URI` |
-| 云 token | `CLOUD_API_TOKEN` 环境变量 | 登录 session 自动注入 |
+| 项 | dev | S6 云端 | S7 客户端 |
+|----|-----|---------|-----------|
+| UI | webpack :9527 | — | desktop-shell 窗口 |
+| 管理 API | `/dev-api` → :3001 | HTTPS → backend | HTTPS → 云端 |
+| Native | dev-native-bridge | — | 主进程 native-runtime |
+| 存储 | SQLite | Mongo | 用户数据 %LOCALAPPDATA% |
 
 ---
 
@@ -92,6 +113,9 @@ flowchart TB
 | 6.8 | staging 环境 | build:stage 预发 | P1 | [1.3](01-ui-branding.md#5) |
 | 6.9 | HTTPS + cookie Secure | 生产 cookie 策略 | P1 | 6.2 |
 | 6.10 | 客户安装手册 | 一页纸安装步骤 | **P0** | 6.1 |
+| **6.y.1** | desktop-shell MVP | Electron + preload chrome.send | **P0** | INFRA-A |
+| **6.y.2** | build-client.ps1 + NSIS | VirtualBrowser-Setup.exe | **P0** | 6.y.1 |
+| **6.y.3** | client.json API 基址 | 构建注入云端 URL | **P0** | S6 |
 
 ---
 
@@ -116,17 +140,26 @@ npm run deploy:worker
 
 ---
 
-## 7. 交付物清单（草案）
+## 7. 交付物清单
 
-| 组件 | 路径 / 产物 | 说明 |
-|------|-------------|------|
-| 指纹内核 | `Chrome-bin/VirtualBrowser/146.0.7680.72/` | 含 VirtualBrowser.exe |
-| 管理 UI | `server/dist/` | `npm run build:prod` |
-| 业务后端 | `server-backend/` | Node 18+；生产 **`STORAGE_DRIVER=mongo`** |
-| 数据库 | MongoDB（生产） | 本地 dev 用 SQLite，见 [07-backend-stack](07-backend-stack.md) |
-| 新标签页 | 内核内 `worker/` | `deploy:worker` |
-| 路径配置 | `config/chrome-bin.paths.json` | 可按安装目录调整 |
-| 用户数据 | `%LOCALAPPDATA%\VirtualBrowser\` | 运行时生成 |
+### S6 云端
+
+| 组件 | 说明 |
+|------|------|
+| `server-backend` | Node 18+，`STORAGE_DRIVER=mongo` |
+| MongoDB | 用户/环境/会话 |
+| `data/profiles/` | Profile zip |
+| `CLOUD_DEPLOY.md` | 部署 SOP |
+
+### S7 客户端
+
+| 组件 | 说明 |
+|------|------|
+| `VirtualBrowser-Setup.exe` | NSIS 安装包 |
+| 内嵌 `server/dist` | Vue 构建产物 |
+| `Chrome-bin/146.x/` | 指纹内核 |
+| `config/client.json` | 云端 API 基址 |
+| `%LOCALAPPDATA%\VirtualBrowser\` | 运行时用户数据 |
 
 ---
 

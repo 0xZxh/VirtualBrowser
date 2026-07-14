@@ -1,0 +1,5 @@
+{
+  "cloudApiBase": "https://api.example.com",
+  "windowTitle": "VirtualBrowser",
+  "productVersion": "0.1.0"
+}

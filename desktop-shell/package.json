@@ -1,0 +1,17 @@
+{
+  "name": "virtualbrowser-desktop-shell",
+  "version": "0.1.0",
+  "description": "VirtualBrowser 客户端 Electron 壳 — preload chrome.send → native-runtime.js",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node scripts/smoke-test.js"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
