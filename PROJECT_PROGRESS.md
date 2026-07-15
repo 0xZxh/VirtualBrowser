@@ -1,8 +1,8 @@
 # VirtualBrowser 二开 — 项目进度与 Agent 交接文档
 
-> **最后更新：** 2026-07-14  
+> **最后更新：** 2026-07-15  
 > **读者：** 接续本项目的 Agent / 开发者  
-> **状态：** **S1–S4 ✅**；**S5 ✅ 基本通过**（扩展目视待用户）；**S6 🟢 mongo HTTP 通过 / HTTPS 待运维**；**S7 🟡 Setup.exe 已产出 / 实机与生产 API 待验**；**S8 🟢 第一期+第二期 API-01..19 完成**（Cookie 第三期未做）  
+> **状态：** **S1–S4 ✅**；**S5 ✅ 基本通过**（扩展目视待用户）；**S6 🟢 mongo HTTP 通过 / HTTPS 待运维**；**S7 🟡 Setup.exe 已产出 / 实机与生产 API 待验**；**S8 🟢 第一期+第二期 API-01..19 完成**（Cookie 第三期未做）；**跨平台预备 ✅**（路径抽象 + UA 伪装；内核仍 Windows-only）  
 > **交付基线：** [`docs/DELIVERY_STANDARD.md`](docs/DELIVERY_STANDARD.md)  
 > **阶段验收真相：** [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)（**以本表为准，勿信旧对话**）  
 > **Multitask 协调：** [`docs/AGENT_COORDINATION.md`](docs/AGENT_COORDINATION.md)（**开工先读**）
@@ -122,7 +122,9 @@ cd D:\bytesio\VirtualBrowser\packaging\scripts
 1. **E2E-2：** Setup 实机安装 → 窗口 → 登录（可先连本机 :3001）→ 启动指纹  
 2. **生产 HTTPS** + 用真实 `CloudApiBase` **重打 Setup**  
 3. （可选）S8 Cookie 第三期；S5 扩展目视；历史 env CDP 偶发超时  
-4. **【提醒】自建 IP 查询**（见下方延后项）— S8 第二期已收尾，可安排实现 |
+4. **【提醒】自建 IP 查询**（见下方延后项）— S8 第二期已收尾，可安排实现  
+
+**已完成预备（2026-07-15）：** `config/vb-paths.js` 统一 Win/macOS/Linux 数据根；管理端指纹 OS 可选 macOS/Linux（UA 伪装）；worker 主页跨平台展示 + Node 部署脚本。**Mac/Linux 客户端内核仍 Out of scope。**
 
 ### 延后项（须主动提醒用户）
 

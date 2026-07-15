@@ -1,8 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-export const workersRoot = path.join(vbRoot, 'Workers')
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getWorkersRoot } = require('../../../config/vb-paths')
+
+export const workersRoot = getWorkersRoot() as string
 
 const CACHE_DIR_NAMES = [
   'Cache',

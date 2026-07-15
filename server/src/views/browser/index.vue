@@ -260,6 +260,7 @@
                     <el-radio-group v-model="form.os">
                       <el-radio-button v-for="item in platforms" :key="item" :label="item" />
                     </el-radio-group>
+                    <div class="tips">{{ $t('browser.platform_tips') }}</div>
                   </el-form-item>
                   <el-form-item :label="$t('browser.version')">
                     <el-select v-model="form.chrome_version" :placeholder="$t('browser.select')">
@@ -823,7 +824,8 @@ import {
   getRandomMemorySize,
   genUserAgent,
   getUaFullVersion,
-  loadScript
+  loadScript,
+  FINGERPRINT_PLATFORMS
 } from '@/utils'
 // import Pagination from '@/components/Pagination' // secondary package based on el-pagination
 import TimeZones from '@/utils/timezones.json'
@@ -837,7 +839,7 @@ import { compareVersions } from 'compare-versions'
 
 let IPGeo = {}
 let fontList = []
-let osVer = '10.0'
+let currentOs = 'Win 11'
 let chromeVer = ''
 // const sslList = ['0xc02c', '0xa02c', '0xb02c', '0xd02c', '0xe02c', '0xf02c']
 let tooltipTimer
@@ -1003,7 +1005,7 @@ export default {
         'cookie.jsonStr': [{ validator: validateCookie, trigger: 'blur' }]
       },
       downloadLoading: false,
-      platforms: ['Win 7', 'Win 8', 'Win 10', 'Win 11'],
+      platforms: FINGERPRINT_PLATFORMS,
       WebGLVendors: Array.from(
         new Set(
           WebGLRenders.map(item => {
@@ -1107,24 +1109,12 @@ export default {
 
       const curVers = Versions.filter(item => Number(item.split('.')[0]) === val)
       chromeVer = curVers[random.int(0, curVers.length - 1)]
-      this.form.ua.value = genUserAgent(osVer, chromeVer)
+      this.form.ua.value = genUserAgent(currentOs, chromeVer)
       this.form['ua-full-version'].value = getUaFullVersion(uaFullVersions, chromeVer)
     },
     'form.os'(val) {
-      switch (val) {
-        case 'Win 7':
-          osVer = '6.1'
-          break
-        case 'Win 8':
-          osVer = '6.2'
-          break
-        case 'Win 10':
-        case 'Win 11':
-          osVer = '10.0'
-          break
-      }
-
-      this.form.ua.value = genUserAgent(osVer, chromeVer)
+      currentOs = val || 'Win 11'
+      this.form.ua.value = genUserAgent(currentOs, chromeVer)
 
       let vers = Array.from(new Set(Versions.map(item => Number(item.split('.')[0]))))
       if (val === 'Win 7' || val === 'Win 8') {
@@ -1381,7 +1371,7 @@ export default {
         },
         ua: {
           mode: 1,
-          value: genUserAgent(osVer, chromeVer)
+          value: genUserAgent(currentOs, chromeVer)
         },
         'ua-full-version': {
           mode: 1,
@@ -1653,6 +1643,7 @@ export default {
       this.dialogFormVisible = true
       this.$nextTick(() => {
         this.form = Object.assign(this.form, row) // copy obj
+        currentOs = this.form.os || 'Win 11'
         this.form.crxIds = (row.crxIds || []).map(String)
         const cookie = this.form.cookie.value
         if (cookie && typeof cookie === 'object') {
@@ -1965,7 +1956,7 @@ export default {
       }
       const curVers = Versions.filter(item => Number(item.split('.')[0]) === val)
       this.chromeVer = curVers[random.int(0, curVers.length - 1)]
-      const UaValue = genUserAgent(osVer, this.chromeVer)
+      const UaValue = genUserAgent(currentOs, this.chromeVer)
       const UaFullVersion = getUaFullVersion(uaFullVersions, this.chromeVer)
       return {
         ua: UaValue,

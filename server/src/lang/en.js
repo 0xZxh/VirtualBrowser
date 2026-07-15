@@ -89,6 +89,8 @@ export default {
     basic: 'Basic',
     advanced: 'Advanced',
     platform: 'Platform',
+    platform_tips:
+      'Fingerprint target OS (may differ from the host). Kernel launch is Windows-only today; macOS/Linux are UA camouflage options.',
     version: 'Version',
     no_proxy: 'No Proxy',
     API: 'API',

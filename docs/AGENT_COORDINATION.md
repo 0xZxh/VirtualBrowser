@@ -50,6 +50,7 @@
 | **bugfix-cdp** | 历史 env launch CDP 偶发超时 | — | — | **unclaimed** | 见 E2E-2026-07-12 |
 | **S8-phase2** | Compat API-09+ | Agent-S8 | 2026-07-14 | **done** | API-09..19；见 [`COMPAT_API.md`](COMPAT_API.md) §第二期验收 |
 | **defer-ip-geo** | 自建 IP 查询（不调第三方） | — | — | **deferred** | 用户要求保留；见 `PROJECT_PROGRESS.md` §延后项；完成 S8-phase2 / 交付收尾时**主动提醒** |
+| **cross-platform-prep** | 数据路径抽象 + 指纹 OS(Mac/Linux UA) + worker/automation 跨平台 | Agent-XP | 2026-07-15 | **done** | `config/vb-paths.js`；内核 exe 仍 Windows-only（Mission） |
 
 **认领规则：**
 

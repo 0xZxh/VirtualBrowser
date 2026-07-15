@@ -2,5 +2,7 @@
   "chromeVersion": "146.0.7680.72",
   "innerExe": "Chrome-bin/VirtualBrowser/146.0.7680.72/VirtualBrowser.exe",
   "innerWorkerDir": "Chrome-bin/VirtualBrowser/146.0.7680.72/worker",
-  "userDataWorkers": "%LOCALAPPDATA%/VirtualBrowser/Workers"
+  "userDataWorkers": "%LOCALAPPDATA%/VirtualBrowser/Workers",
+  "note": "userDataWorkers 仅作文档提示；运行时请用 config/vb-paths.js（支持 Win/macOS/Linux + VB_DATA_ROOT）"
 }
+

@@ -5,9 +5,11 @@ import { EnvironmentsService } from '../environments/environments.service'
 import { BrowserEnvironmentItem } from '../environments/environment.types'
 import { UserRecord } from '../users/user.types'
 
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-const workersRoot = path.join(vbRoot, 'Workers')
-const listFile = path.join(vbRoot, 'User Data', 'browser-list.json')
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getWorkersRoot, getBrowserListFile } = require('../../../config/vb-paths')
+
+const workersRoot = getWorkersRoot() as string
+const listFile = getBrowserListFile() as string
 
 @Injectable()
 export class NativeSyncService {

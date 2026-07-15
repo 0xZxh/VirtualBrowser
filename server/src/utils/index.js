@@ -383,9 +383,43 @@ export function genRandomMacAddr() {
   return e.map(o).join('-').toUpperCase()
 }
 
-export function genUserAgent(osVer, chromeVer) {
+/** 指纹伪装用操作系统标签 → UA 片段（与宿主机 OS 无关） */
+const PLATFORM_UA = {
+  'Win 7': { kind: 'windows', nt: '6.1' },
+  'Win 8': { kind: 'windows', nt: '6.2' },
+  'Win 10': { kind: 'windows', nt: '10.0' },
+  'Win 11': { kind: 'windows', nt: '10.0' },
+  macOS: { kind: 'mac', cpu: 'Intel' },
+  'macOS Arm': { kind: 'mac', cpu: 'Arm' },
+  Linux: { kind: 'linux' }
+}
+
+export const FINGERPRINT_PLATFORMS = Object.keys(PLATFORM_UA)
+
+/**
+ * @param {string} platformOrNt 平台标签（如 'Win 11' / 'macOS'）或旧版 NT 版本号（如 '10.0'）
+ * @param {string} chromeVer Chrome 完整版本号
+ */
+export function genUserAgent(platformOrNt, chromeVer) {
+  const meta = PLATFORM_UA[platformOrNt]
+  if (meta) {
+    if (meta.kind === 'windows') {
+      const arch = Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
+      return `Mozilla/5.0 (Windows NT ${meta.nt}; ${arch}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    }
+    if (meta.kind === 'mac') {
+      const macVer = Math.random() < 0.5 ? '10_15_7' : '13_6_0'
+      if (meta.cpu === 'Arm') {
+        return `Mozilla/5.0 (Macintosh; ARM64 Mac OS X ${macVer}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+      }
+      return `Mozilla/5.0 (Macintosh; Intel Mac OS X ${macVer}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    }
+    return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+  }
+
+  // 兼容旧调用：第二个语义为 Windows NT 版本号
   const arch = Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
-  return `Mozilla/5.0 (Windows NT ${osVer}; ${arch}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+  return `Mozilla/5.0 (Windows NT ${platformOrNt}; ${arch}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
 }
 
 export function getUaFullVersion(uaFullVersions, chromeVer) {

@@ -6,7 +6,8 @@
     "dev": "npm run serve",
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
-    "deploy:worker": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-worker.ps1",
+    "deploy:worker": "node ./scripts/deploy-worker.js",
+    "deploy:worker:ps1": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-worker.ps1",
     "lint": "vue-cli-service lint"
   },
   "dependencies": {

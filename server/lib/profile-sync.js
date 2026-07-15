@@ -2,8 +2,9 @@ const fs = require('fs')
 const path = require('path')
 const AdmZip = require('adm-zip')
 
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-const snapshotsRoot = path.join(vbRoot, 'ProfileSnapshots')
+const { getSnapshotsRoot } = require('../../config/vb-paths')
+
+const snapshotsRoot = getSnapshotsRoot()
 
 /** @type {Set<string>} */
 const EXCLUDE_DIR_NAMES = new Set([

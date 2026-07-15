@@ -48,8 +48,11 @@ module.exports = {
     onListening(server) {
       const port = server.listeningOption?.port || 9527
       console.log('')
-      console.log(`  [VirtualBrowser] 二开 dev → http://localhost:${port}`)
-      console.log('  native: dev-native-bridge（浏览器内可创建/启动，走真实内核）')
+      console.log(`  [VirtualBrowser] 管理端 UI → http://localhost:${port}`)
+      console.log('  native: /dev-native-bridge（列表/创建/编辑可用）')
+      if (process.platform !== 'win32') {
+        console.log('  提示: 当前非 Windows，指纹内核无法启动；可先打磨 UI / worker')
+      }
       console.log('')
     },
   },

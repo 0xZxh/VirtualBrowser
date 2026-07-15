@@ -8,7 +8,30 @@ cr.webUIResponse = function (cb, status, data) {
   callbackFn && callbackFn(data)
 }
 
+/** 普通浏览器预览（非 VirtualBrowser 内核内嵌页） */
+export function isWorkerPreviewMode() {
+  return typeof chrome === 'undefined' || typeof chrome.send !== 'function'
+}
+
+function previewChromeSend(name) {
+  if (name === 'getGlobalData') {
+    return { data: localStorage.getItem('GlobalData') || '{}' }
+  }
+  if (name === 'setGlobalData') {
+    return { ok: true, preview: true }
+  }
+  if (name === 'setIpGeo') {
+    // 预览模式：跳过写回内核
+    return { ok: true, preview: true }
+  }
+  return { ok: true, preview: true }
+}
+
 export async function chromeSend(name, ...params) {
+  if (isWorkerPreviewMode()) {
+    return previewChromeSend(name, ...params)
+  }
+
   const pTimeOut = timeout => {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
@@ -56,10 +79,25 @@ export async function getGlobalData() {
   try {
     GlobalData = parseGlobalDataPayload(localStorage.getItem('GlobalData'))
     const bridge = await chromeSend('getGlobalData')
-    GlobalData = parseGlobalDataPayload(bridge && bridge.data)
+    const fromBridge = parseGlobalDataPayload(bridge && bridge.data)
+    if (Object.keys(fromBridge).length) {
+      GlobalData = fromBridge
+    }
   } catch {
     //
   }
 
   return GlobalData
+}
+
+export async function setGlobalData(patch) {
+  const current = await getGlobalData()
+  const next = { ...current, ...patch }
+  localStorage.setItem('GlobalData', JSON.stringify(next))
+  try {
+    await chromeSend('setGlobalData', JSON.stringify(next))
+  } catch {
+    // preview ok
+  }
+  return next
 }

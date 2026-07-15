@@ -10,11 +10,16 @@ const pathsConfig = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'config/chrome-bin.paths.json'), 'utf8')
 )
 
+const {
+  getWorkersRoot,
+  getGlobalDatFile,
+  getBrowserListFile
+} = require('../../config/vb-paths')
+
 const innerExe = path.join(repoRoot, pathsConfig.innerExe.replace(/\//g, path.sep))
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-const workersRoot = path.join(vbRoot, 'Workers')
-const userDataFile = path.join(vbRoot, 'User Data', 'global.dat')
-const listFile = path.join(vbRoot, 'User Data', 'browser-list.json')
+const workersRoot = getWorkersRoot()
+const userDataFile = getGlobalDatFile()
+const listFile = getBrowserListFile()
 
 const DEBUG_PORT_MIN = 19200
 const DEBUG_PORT_MAX = 19999
@@ -325,6 +330,12 @@ function attachExitHandler(proc, id, workerDir, req) {
 
 async function launchBrowser(envId, req, options = {}) {
   const id = String(envId)
+  if (process.platform !== 'win32') {
+    throw new Error(
+      `当前为 ${process.platform}：指纹内核 VirtualBrowser.exe 仅支持 Windows。` +
+        `Mac/Linux 可继续创建/编辑环境与云同步，启动请在 Windows 实机或装包环境验证。`
+    )
+  }
   if (!fs.existsSync(innerExe)) {
     throw new Error(`内核不存在: ${innerExe}，请安装 Chrome-bin`)
   }

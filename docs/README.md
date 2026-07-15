@@ -156,6 +156,7 @@ npm run dev   # → http://localhost:9527
 | [`MISSION.md`](../MISSION.md) | 长期目标 |
 | [`NOTES.md`](../NOTES.md) | 用户偏好备忘 |
 | [`config/PATHS.md`](../config/PATHS.md) | 路径与命令 |
+| [`docs/MAC_FRONTEND_DEV.md`](MAC_FRONTEND_DEV.md) | **Mac 上只做 server/worker** |
 | [`lessons/`](../lessons/) | 教学 HTML |
 | [`reference/`](../reference/) | 术语速查 |
 

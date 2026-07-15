@@ -1,23 +1,37 @@
+const fs = require('fs')
+const path = require('path')
 const { chromium } = require('playwright')
+const { getWorkerDir } = require('../config/vb-paths')
 
-// Paths: config/chrome-bin.paths.json
+const repoRoot = path.join(__dirname, '..')
+const pathsConfig = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, 'config/chrome-bin.paths.json'), 'utf8')
+)
+
 const INNER_EXE =
-  'D:\\bytesio\\VirtualBrowser\\Chrome-bin\\VirtualBrowser\\146.0.7680.72\\VirtualBrowser.exe'
+  process.env.VB_INNER_EXE ||
+  path.join(repoRoot, pathsConfig.innerExe.replace(/\//g, path.sep))
 
 ;(async () => {
-  // worker-id 需要先在外层管理壳里手动创建
-  const workerId = 1
+  // worker-id 需要先在管理端手动创建
+  const workerId = Number(process.env.VB_WORKER_ID || 1)
+  const userDataDir = getWorkerDir(workerId)
 
-  const browser = await chromium.launchPersistentContext(
-    `${process.env.localappdata}\\VirtualBrowser\\Workers\\${workerId}`,
-    {
-      // 内层 Chromium 启动器（指纹内核，非外层 Electron 管理壳）
-      executablePath: INNER_EXE,
-      args: [`--worker-id=${workerId}`],
-      headless: false,
-      defaultViewport: null,
-    }
-  )
+  if (!fs.existsSync(INNER_EXE)) {
+    console.error(
+      'Inner kernel not found:',
+      INNER_EXE,
+      '\nHint: Windows-only VirtualBrowser.exe today; set VB_INNER_EXE if custom.'
+    )
+    process.exit(1)
+  }
+
+  const browser = await chromium.launchPersistentContext(userDataDir, {
+    executablePath: INNER_EXE,
+    args: [`--worker-id=${workerId}`],
+    headless: false,
+    defaultViewport: null
+  })
 
   const page = await browser.newPage()
   await page.goto('http://example.com')

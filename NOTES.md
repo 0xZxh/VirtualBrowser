@@ -14,6 +14,8 @@
 - **Agent 交接（架构/命令/常见坑）：** [`PROJECT_PROGRESS.md`](PROJECT_PROGRESS.md)
 - 登录已对接 `server-backend`（Nest `/auth/*`）；用户管理见 `/system/users`
 - 云同步暂需 `CLOUD_API_TOKEN`（见 INTEGRATION §Auth→Cloud，S3 待做）
+- **跨平台预备（2026-07-15）：** 数据目录见 `config/vb-paths.js`；指纹 OS 可选 macOS/Linux（UA）；**客户端内核仍仅 Windows**（MISSION Out of scope）
+- **Mac 前端开发：** 见 [`docs/MAC_FRONTEND_DEV.md`](docs/MAC_FRONTEND_DEV.md)；不跑装包，先打磨 `server` + `worker`
 
 ### 路线 B（当前）
 

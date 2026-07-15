@@ -35,6 +35,36 @@ function noiseChannel(): number {
   return (Math.random() - 0.5) * 20
 }
 
+/** 与 server/src/utils/index.js genUserAgent 保持一致的指纹伪装 UA */
+function genUserAgentForPlatform(platform: string, chromeVer: string): string {
+  switch (platform) {
+    case 'Win 7':
+      return `Mozilla/5.0 (Windows NT 6.1; ${
+        Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
+      }) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    case 'Win 8':
+      return `Mozilla/5.0 (Windows NT 6.2; ${
+        Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
+      }) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    case 'macOS': {
+      const macVer = Math.random() < 0.5 ? '10_15_7' : '13_6_0'
+      return `Mozilla/5.0 (Macintosh; Intel Mac OS X ${macVer}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    }
+    case 'macOS Arm': {
+      const macVer = Math.random() < 0.5 ? '10_15_7' : '13_6_0'
+      return `Mozilla/5.0 (Macintosh; ARM64 Mac OS X ${macVer}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    }
+    case 'Linux':
+      return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    case 'Win 10':
+    case 'Win 11':
+    default: {
+      const arch = Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
+      return `Mozilla/5.0 (Windows NT 10.0; ${arch}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    }
+  }
+}
+
 /** 就地随机化指纹相关字段，保留 name/group/proxy/homepage/cookie 等业务字段 */
 export function randomizeFingerprintFields(
   item: Record<string, unknown>
@@ -46,11 +76,12 @@ export function randomizeFingerprintFields(
     chromeVersion === '默认' || !/^\d+/.test(chromeVersion)
       ? '146'
       : String(chromeVersion).split('.')[0]
-  const arch = Math.random() < 0.5 ? 'WOW64' : 'Win64; x64'
-  const ua = `Mozilla/5.0 (Windows NT 10.0; ${arch}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+  const platform = String(item.os || 'Win 11')
+  const ua = genUserAgentForPlatform(platform, `${major}.0.0.0`)
 
   const next: Record<string, unknown> = {
     ...item,
+    os: platform,
     cpu: { mode: 1, value: cpu },
     memory: { mode: 1, value: memory },
     'device-name': { mode: 1, value: genRandomComputerName() },

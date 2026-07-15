@@ -90,6 +90,7 @@ export default {
     basic: '基础设置',
     advanced: '高级设置',
     platform: '操作系统',
+    platform_tips: '指纹伪装目标系统（与宿主机可不同）。当前内核仅 Windows 可启动；Mac/Linux 为 UA 伪装选项。',
     version: '浏览器版本',
     no_proxy: '不使用代理',
     API: 'API',

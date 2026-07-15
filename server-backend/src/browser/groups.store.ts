@@ -1,8 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-const userDataFile = path.join(vbRoot, 'User Data', 'global.dat')
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getGlobalDatFile } = require('../../../config/vb-paths')
+
+const userDataFile = getGlobalDatFile() as string
 
 export interface GroupItem {
   id: number

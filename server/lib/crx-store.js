@@ -3,10 +3,11 @@ const path = require('path')
 const crypto = require('crypto')
 const AdmZip = require('adm-zip')
 
-const vbRoot = path.join(process.env.LOCALAPPDATA || '', 'VirtualBrowser')
-const userDataDir = path.join(vbRoot, 'User Data')
+const { getUserDataDir, getExtensionsRoot } = require('../../config/vb-paths')
+
+const userDataDir = getUserDataDir()
 const listFile = path.join(userDataDir, 'crx-list.json')
-const extensionsRoot = path.join(vbRoot, 'Extensions')
+const extensionsRoot = getExtensionsRoot()
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
