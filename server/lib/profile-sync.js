@@ -24,8 +24,7 @@ const SYNC_ENTRY_PREFIXES = [
   'Local Storage',
   'IndexedDB',
   'Session Storage',
-  'Cache',
-  'Code Cache',
+  // Cache / Code Cache 体积过大且可重建，不纳入云同步
   'Service Worker',
   'blob_storage'
 ]

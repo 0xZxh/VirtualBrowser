@@ -2,7 +2,15 @@ const fs = require('fs')
 const path = require('path')
 const profileSync = require('./profile-sync')
 
-const CLOUD_API_BASE = (process.env.CLOUD_API_BASE || 'http://localhost:3001').replace(/\/$/, '')
+function getCloudApiBase() {
+  // 运行时读取：desktop-shell 可能在 require 本模块之后才写入 CLOUD_API_BASE
+  return (process.env.CLOUD_API_BASE || 'http://localhost:3001').replace(/\/$/, '')
+}
+
+/** 自建 IP 地理查询默认 URL（cloudApiBase 已去尾斜杠） */
+function getDefaultIpGeoApiLink() {
+  return `${getCloudApiBase()}/api/ip-geo`
+}
 
 function authHeaders(token) {
   if (!token) {
@@ -31,9 +39,24 @@ function writeLocalCloudMeta(envId, meta) {
   fs.writeFileSync(getCloudMetaPath(envId), JSON.stringify(meta, null, 2), 'utf8')
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error(`cloud API 超时 (${timeoutMs}ms): ${url}`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function getSnapshotMeta(envId, token) {
-  const url = `${CLOUD_API_BASE}/api/profiles/${encodeURIComponent(envId)}/snapshot/meta`
-  const res = await fetch(url, { headers: authHeaders(token) })
+  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot/meta`
+  const res = await fetchWithTimeout(url, { headers: authHeaders(token) })
 
   if (res.status === 404) return null
   if (!res.ok) {
@@ -51,16 +74,20 @@ async function uploadSnapshot(envId, zipPath, token) {
   }
 
   const buffer = fs.readFileSync(zipPath)
-  const url = `${CLOUD_API_BASE}/api/profiles/${encodeURIComponent(envId)}/snapshot`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...authHeaders(token),
-      'Content-Type': 'application/zip',
-      'Content-Length': String(buffer.length)
+  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        ...authHeaders(token),
+        'Content-Type': 'application/zip',
+        'Content-Length': String(buffer.length)
+      },
+      body: buffer
     },
-    body: buffer
-  })
+    300000
+  )
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -74,8 +101,8 @@ async function uploadSnapshot(envId, zipPath, token) {
 }
 
 async function downloadSnapshot(envId, workerDir, token) {
-  const url = `${CLOUD_API_BASE}/api/profiles/${encodeURIComponent(envId)}/snapshot`
-  const res = await fetch(url, { headers: authHeaders(token) })
+  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const res = await fetchWithTimeout(url, { headers: authHeaders(token) }, 300000)
 
   if (res.status === 404) return null
   if (!res.ok) {
@@ -117,8 +144,9 @@ async function shouldPullFromCloud(envId, workerDir, token) {
     return { pull: true, reason: 'no-local-data', cloudMeta, localCloudMeta }
   }
 
-  if (!localCloudMeta || !localCloudMeta.version) {
-    return { pull: true, reason: 'no-local-cloud-meta', cloudMeta, localCloudMeta }
+  // 本地已有 profile 但尚无 cloud meta：保留本机数据，避免被云端 zip 覆盖导致「无缓存」
+  if (!localCloudMeta || localCloudMeta.version == null) {
+    return { pull: false, reason: 'local-without-meta', cloudMeta, localCloudMeta }
   }
 
   if (cloudMeta.version > localCloudMeta.version) {
@@ -128,12 +156,9 @@ async function shouldPullFromCloud(envId, workerDir, token) {
   return { pull: false, reason: 'up-to-date', cloudMeta, localCloudMeta }
 }
 
-function getCloudApiBase() {
-  return CLOUD_API_BASE
-}
-
 module.exports = {
   getCloudApiBase,
+  getDefaultIpGeoApiLink,
   getSnapshotMeta,
   uploadSnapshot,
   downloadSnapshot,

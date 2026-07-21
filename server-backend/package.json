@@ -6,20 +6,22 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
-    "start:prod": "node dist/main.js"
+    "start:prod": "node dist/main.js",
+    "geoip:update": "node scripts/download-geolite2.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@nestjs/config": "^3.3.0",
     "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
     "@nestjs/core": "^10.4.15",
     "@nestjs/mongoose": "^10.1.0",
     "@nestjs/platform-express": "^10.4.15",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.7.0",
     "express": "^4.21.2",
+    "maxmind": "^5.0.6",
     "mongoose": "^8.9.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
@@ -27,8 +29,8 @@
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.10",
     "typescript": "^5.7.2"

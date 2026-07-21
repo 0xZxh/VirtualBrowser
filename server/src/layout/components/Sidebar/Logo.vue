@@ -46,8 +46,8 @@ export default {
 .sidebar-logo-container {
   position: relative;
   width: 100%;
-  height: 50px;
-  line-height: 50px;
+  height: 52px;
+  line-height: 52px;
   background: $subMenuBg;
   text-align: center;
   overflow: hidden;
@@ -59,6 +59,7 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0 12px;
 
     & .sidebar-logo-mark {
       display: inline-flex;
@@ -81,9 +82,10 @@ export default {
       margin: 0;
       color: #e2e8f0;
       font-weight: 600;
-      line-height: 50px;
+      line-height: 52px;
       font-size: 14px;
-      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-family: 'PingFang SC', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      letter-spacing: 0.3px;
       vertical-align: middle;
       white-space: nowrap;
     }

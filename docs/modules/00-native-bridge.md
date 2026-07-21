@@ -126,10 +126,40 @@ curl -s -X POST http://localhost:9527/dev-native-bridge `
 |------|------|
 | `chrome.send is not a function` | 必须用 `npm run dev`，非静态服务器 |
 | 内核不存在 | 安装/恢复 `Chrome-bin/146.x` |
+| 云同步弹出 `timeout` | 须使用已修复的 `chromeSendTimeout` 路径（拉取/上传 120s）；旧包会在 2s 误报 |
 
 ---
 
-## 7. 关联模块
+## 8. 指纹参数是否生效 — 自测
+
+编辑保存后配置写入 `%LOCALAPPDATA%\VirtualBrowser\Workers\{id}\virtual.dat`；启动时由内核读取。云同步只同步 Cookies/Cache 等 profile，**不含**指纹 JSON。
+
+### 人工对照（改一项 → 确定保存 → 启动）
+
+| 要测的项 | 编辑里怎么设 | 启动后怎么看 |
+|----------|--------------|--------------|
+| 启动主页 | 自定义 URL | 地址栏是否为目标站 |
+| UA | 自定义，末尾加标记如 `MyProbe/1` | `chrome://version` 或站点查看 UA |
+| 分辨率 | 自定义宽高 | F12：`screen.width/height` |
+| CPU/内存 | 非常见值如 3 核 / 2GB | `navigator.hardwareConcurrency` / `deviceMemory` |
+| WebGL | 自定义厂商/渲染 | BrowserLeaks WebGL |
+| Cookie | 开启导入 JSON | 目标域 `document.cookie` |
+| 代理 | 自定义代理 | 对比出口 IP（如 ipify） |
+
+注意：「按 IP 生成语言/时区」依赖默认主页进入 `chrome://virtual-worker`；自定义主页时这些可能不刷新。
+
+### 一键脚本（开发机，需 Chrome-bin）
+
+```powershell
+cd D:\bytesio\VirtualBrowser
+node server/lib/__tests__/fingerprint-runtime-probe.js
+```
+
+示例报告：[`docs/acceptance-reports/fingerprint-settings-2026-07-19.md`](../acceptance-reports/fingerprint-settings-2026-07-19.md)
+
+---
+
+## 9. 关联模块
 
 - **上游：** [02-auth-login](02-auth-login.md)（未来 bridge 鉴权）、[03-rbac](03-rbac-permissions.md)（环境过滤）
 - **下游：** [05-profile-cloud-sync](05-profile-cloud-sync.md)（launch 生命周期）、[04-crx-extensions](04-crx-extensions.md)（启动注入）

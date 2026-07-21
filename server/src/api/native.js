@@ -51,10 +51,20 @@ export async function chromeSendTimeout(name, timeout = 2000, ...params) {
       return
     }
 
+    // Electron 桌面壳：vbDesktop.invoke 直接返回 Promise（无需 chrome.send / cr 回调）
+    if (
+      typeof window !== 'undefined' &&
+      window.vbDesktop &&
+      typeof window.vbDesktop.invoke === 'function'
+    ) {
+      window.vbDesktop.invoke(name, params).then(resolve).catch(reject)
+      return
+    }
+
     if (!isNativeBridgeAvailable()) {
       reject(
         new Error(
-          'chrome.send 不可用。开发二开请用 npm run dev（dev-native-bridge）；生产环境请在 Virtual Browser 内运行。'
+          'native bridge 不可用（vbDesktop.invoke / chrome.send）。开发二开请用 npm run dev（dev-native-bridge）；生产环境请在 VirtualBrowser 桌面壳内运行。'
         )
       )
       return
@@ -112,6 +122,19 @@ export async function setGlobalData(key, value) {
   await chromeSend('setGlobalData', JSON.stringify(GlobalData)).catch(console.warn)
 }
 
+/** 自建 IP 库默认 URL：cloudApiBase + /api/ip-geo */
+export async function getDefaultIpGeoApiLink() {
+  try {
+    const link = await chromeSend('getDefaultIpGeoApiLink')
+    if (typeof link === 'string' && link.trim()) {
+      return link.trim()
+    }
+  } catch {
+    //
+  }
+  return 'http://localhost:3001/api/ip-geo'
+}
+
 function asBrowserListArray(raw) {
   if (Array.isArray(raw)) {
     return raw
@@ -157,7 +180,8 @@ function normalizeBrowserList(list) {
 async function syncListToBridge(list) {
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
-  await chromeSend('setBrowserList', data).catch(console.warn)
+  // 多环境写 virtual.dat 可能超过默认 2s；失败必须抛出，避免 UI 假成功
+  await chromeSendTimeout('setBrowserList', 30000, data)
 }
 
 async function fetchListFromBackend() {
@@ -271,9 +295,7 @@ export async function addBrowser(item, defaultName) {
 
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
-  await chromeSend('setBrowserList', data).catch(err => {
-    console.warn(err)
-  })
+  await chromeSendTimeout('setBrowserList', 30000, data)
   await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
 }
 export async function updateBrowser(item) {
@@ -291,9 +313,7 @@ export async function updateBrowser(item) {
 
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
-  await chromeSend('setBrowserList', data).catch(err => {
-    console.warn(err)
-  })
+  await chromeSendTimeout('setBrowserList', 30000, data)
   await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
 }
 export async function deleteBrowser(id) {
@@ -314,14 +334,25 @@ export async function deleteBrowser(id) {
 
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
-  await chromeSend('setBrowserList', data).catch(err => {
-    console.warn(err)
-  })
+  await chromeSendTimeout('setBrowserList', 30000, data)
 }
 
 export async function updateRuningState() {
   const runingIds = await chromeSend('getRuningBrowser').catch(() => {})
   window._updateState && window._updateState(runingIds || [])
+}
+
+/** 订阅内核进程退出（桌面壳 IPC）；非 Electron 环境返回空卸载函数 */
+export function onBrowserExited(callback) {
+  if (
+    typeof window !== 'undefined' &&
+    window.vbDesktop &&
+    typeof window.vbDesktop.onBrowserExited === 'function' &&
+    typeof callback === 'function'
+  ) {
+    return window.vbDesktop.onBrowserExited(callback)
+  }
+  return () => {}
 }
 
 export async function getBrowserVersion() {
@@ -343,15 +374,15 @@ export async function getProfileLocalMeta(envId) {
 }
 
 export async function getProfileSyncStatus(envId) {
-  return chromeSend('getProfileSyncStatus', envId, 15000)
+  return chromeSendTimeout('getProfileSyncStatus', 15000, envId)
 }
 
 export async function syncProfileToCloud(envId) {
-  return chromeSend('syncProfileToCloud', envId, 120000)
+  return chromeSendTimeout('syncProfileToCloud', 300000, envId)
 }
 
 export async function syncProfileFromCloud(envId) {
-  return chromeSend('syncProfileFromCloud', envId, 120000)
+  return chromeSendTimeout('syncProfileFromCloud', 300000, envId)
 }
 
 export async function syncEnvCrxBindings(envId, crxIds) {

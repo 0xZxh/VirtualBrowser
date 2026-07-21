@@ -23,16 +23,21 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+@import '@/styles/variables.scss';
+
 .app-main {
   /* 50= navbar  50  */
   min-height: calc(100vh - 50px);
   width: 100%;
   position: relative;
   overflow: hidden;
+  background: $pageBg;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
 .fixed-header + .app-main {
-  padding-top: 50px;
+  padding-top: calc(50px + 16px);
 }
 
 .hasTagsView {
@@ -42,7 +47,7 @@ export default {
   }
 
   .fixed-header + .app-main {
-    padding-top: 84px;
+    padding-top: calc(84px + 16px);
   }
 }
 </style>

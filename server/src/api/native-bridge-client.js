@@ -1,5 +1,17 @@
+import { getToken } from '@/utils/auth'
+
+/**
+ * Electron 桌面壳通过 contextBridge 暴露 vbDesktop.invoke（Promise）。
+ * 不能依赖 chrome.send：Chromium 预置 window.chrome，contextBridge 无法覆盖；
+ * 且 contextIsolation 下 preload 无法回调页面 window.cr。
+ */
 export function isNativeBridgeAvailable() {
-  return typeof chrome !== 'undefined' && typeof chrome.send === 'function'
+  return (
+    (typeof window !== 'undefined' &&
+      window.vbDesktop &&
+      typeof window.vbDesktop.invoke === 'function') ||
+    (typeof chrome !== 'undefined' && typeof chrome.send === 'function')
+  )
 }
 
 export function isDevNativeBridgeMode() {
@@ -7,8 +19,6 @@ export function isDevNativeBridgeMode() {
 }
 
 let devBridgeWarned = false
-
-import { getToken } from '@/utils/auth'
 
 export async function devNativeBridgeSend(name, params) {
   if (!devBridgeWarned) {

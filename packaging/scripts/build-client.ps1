@@ -58,7 +58,9 @@ if ($CloudApiBase) {
   $template.cloudApiBase = $CloudApiBase
 }
 $template.productVersion = $ProductVersion
-$template | ConvertTo-Json -Depth 5 | Set-Content -Path $clientJsonPath -Encoding UTF8
+# UTF-8 without BOM — BOM breaks JSON.parse in Electron / Node
+$clientJsonText = ($template | ConvertTo-Json -Depth 5) + "`n"
+[System.IO.File]::WriteAllText($clientJsonPath, $clientJsonText, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Wrote $clientJsonPath"
 Write-Host "  cloudApiBase = $($template.cloudApiBase)"
 
@@ -125,11 +127,28 @@ if (-not (Test-Path $electronDist)) {
 Copy-Item -Path (Join-Path $electronDist "*") -Destination $stagingRoot -Recurse -Force
 Rename-Item -Path (Join-Path $stagingRoot "electron.exe") -NewName "VirtualBrowser.exe" -ErrorAction SilentlyContinue
 
+$assetsDir = Join-Path $packagingRoot "assets"
+$appIco = Join-Path $assetsDir "app.ico"
+if (-not (Test-Path $appIco)) {
+  throw "Missing $appIco — run: node packaging/scripts/generate-app-icon.js"
+}
+
 # App resources
 New-Item -ItemType Directory -Path (Join-Path $stagingRoot "resources\app") -Force | Out-Null
 $appDir = Join-Path $stagingRoot "resources\app"
 Copy-Item -Path (Join-Path $shellDir "package.json") -Destination $appDir
 Copy-Item -Path (Join-Path $shellDir "src") -Destination (Join-Path $appDir "src") -Recurse
+# BrowserWindow icon (resolveAppIcon looks under resources/app/assets)
+$shellAssetsSrc = Join-Path $shellDir "assets"
+if (Test-Path $shellAssetsSrc) {
+  Copy-Item -Path $shellAssetsSrc -Destination (Join-Path $appDir "assets") -Recurse -Force
+} else {
+  New-Item -ItemType Directory -Path (Join-Path $appDir "assets") -Force | Out-Null
+  Copy-Item -Path $appIco -Destination (Join-Path $appDir "assets\app.ico") -Force
+}
+# Installer shortcut + DisplayIcon fallback path
+New-Item -ItemType Directory -Path (Join-Path $stagingRoot "assets") -Force | Out-Null
+Copy-Item -Path $appIco -Destination (Join-Path $stagingRoot "assets\app.ico") -Force
 
 New-Item -ItemType Directory -Path (Join-Path $stagingRoot "dist\server") -Force | Out-Null
 Copy-Item -Path (Join-Path $distDir "*") -Destination (Join-Path $stagingRoot "dist\server") -Recurse -Force
@@ -144,11 +163,95 @@ if (Test-Path $chromeBinDir) {
   Write-Warning "Chrome-bin/ not found; installer will lack fingerprint kernel (env launch will fail)"
 }
 
+# Replace VisualElements PNGs (FP brand) in staging Chrome-bin if present
+$veLogo = Join-Path $assetsDir "Logo.png"
+$veSmall = Join-Path $assetsDir "SmallLogo.png"
+if ((Test-Path $veLogo) -and (Test-Path $veSmall)) {
+  Get-ChildItem -Path (Join-Path $stagingRoot "Chrome-bin") -Recurse -Directory -Filter "VisualElements" -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item -Path $veLogo -Destination (Join-Path $_.FullName "Logo.png") -Force
+    Copy-Item -Path $veSmall -Destination (Join-Path $_.FullName "SmallLogo.png") -Force
+    Write-Host "Updated VisualElements: $($_.FullName)"
+  }
+}
+
+function Invoke-RceditIcon {
+  param(
+    [Parameter(Mandatory = $true)][string]$ExePath,
+    [Parameter(Mandatory = $true)][string]$IconPath
+  )
+  if (-not (Test-Path $ExePath)) {
+    Write-Warning "rcedit skip (missing exe): $ExePath"
+    return
+  }
+  if (-not (Test-Path $IconPath)) {
+    throw "rcedit icon missing: $IconPath"
+  }
+  if (-not (Test-Path (Join-Path $shellDir "node_modules\rcedit"))) {
+    throw "Missing rcedit — run npm install in desktop-shell (devDependency rcedit@4)"
+  }
+  Write-Host "rcedit --set-icon => $ExePath"
+  # Helper must live under desktop-shell so require('rcedit') resolves (node ignores cwd for require).
+  $helperDir = Join-Path $shellDir "scripts"
+  New-Item -ItemType Directory -Path $helperDir -Force | Out-Null
+  $helper = Join-Path $helperDir ("_rcedit-tmp-" + [guid]::NewGuid().ToString("n") + ".js")
+  $helperBody = @(
+    'const path = require("path");'
+    'const rcedit = require("rcedit");'
+    'const exe = process.env.VB_RCEDIT_EXE;'
+    'const icon = process.env.VB_RCEDIT_ICON;'
+    '(async () => {'
+    '  await rcedit(exe, { icon });'
+    '  console.log("ok:", path.basename(exe));'
+    '})().catch((err) => { console.error(err); process.exit(1); });'
+  ) -join "`n"
+  [System.IO.File]::WriteAllText($helper, $helperBody)
+  try {
+    $env:VB_RCEDIT_EXE = $ExePath
+    $env:VB_RCEDIT_ICON = $IconPath
+    node $helper
+    if ($LASTEXITCODE -ne 0) { throw "rcedit failed for $ExePath" }
+  }
+  finally {
+    Remove-Item Env:VB_RCEDIT_EXE -ErrorAction SilentlyContinue
+    Remove-Item Env:VB_RCEDIT_ICON -ErrorAction SilentlyContinue
+    Remove-Item $helper -Force -ErrorAction SilentlyContinue
+  }
+}
+
+Write-Step "Apply FP icon via rcedit (shell + kernel)"
+$shellExe = Join-Path $stagingRoot "VirtualBrowser.exe"
+Invoke-RceditIcon -ExePath $shellExe -IconPath $appIco
+
+$kernelExeCandidates = @(
+  (Join-Path $stagingRoot "Chrome-bin\VirtualBrowser\146.0.7680.72\VirtualBrowser.exe"),
+  (Join-Path $stagingRoot "Chrome-bin\VirtualBrowser.exe")
+)
+$kernelExe = $kernelExeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($kernelExe) {
+  Invoke-RceditIcon -ExePath $kernelExe -IconPath $appIco
+} else {
+  $found = Get-ChildItem -Path (Join-Path $stagingRoot "Chrome-bin") -Recurse -Filter "VirtualBrowser.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '\\chrome_proxy' } |
+    Select-Object -First 1
+  if ($found) {
+    Invoke-RceditIcon -ExePath $found.FullName -IconPath $appIco
+  } else {
+    Write-Warning "Kernel VirtualBrowser.exe not found under staging Chrome-bin; skipped rcedit"
+  }
+}
+
 # native-runtime server/lib (+ config); not the whole server source tree
 $serverLibDest = Join-Path $stagingRoot "server\lib"
 New-Item -ItemType Directory -Path $serverLibDest -Force | Out-Null
 Copy-Item -Path (Join-Path $repoRoot "server\lib\*") -Destination $serverLibDest -Recurse -Force
 Copy-Item -Path (Join-Path $repoRoot "config\chrome-bin.paths.json") -Destination (Join-Path $stagingRoot "config\chrome-bin.paths.json") -Force
+# cross-platform-prep: native-runtime / profile-sync / crx-store require ../../config/vb-paths
+$vbPathsSrc = Join-Path $repoRoot "config\vb-paths.js"
+if (-not (Test-Path $vbPathsSrc)) {
+  throw "Missing config/vb-paths.js (required by server/lib)"
+}
+Copy-Item -Path $vbPathsSrc -Destination (Join-Path $stagingRoot "config\vb-paths.js") -Force
+Write-Host "Copied config/vb-paths.js"
 
 # native-runtime chain (profile-sync / crx-store) npm runtime deps.
 # Node resolves from server/lib/*.js -> staging/server/node_modules/<pkg>

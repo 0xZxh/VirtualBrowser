@@ -1,9 +1,85 @@
-# VirtualBrowser 云端生产部署 SOP
+# VirtualBrowser 服务端部署手册
 
-> **适用阶段：** S6 云端交付  
-> **组件：** MongoDB + `server-backend`（NestJS）+ Nginx（HTTPS 反向代理）  
-> **最后更新：** 2026-07-11（Agent-S6）  
-> **关联文档：** [06-deployment](modules/06-deployment.md)、[07-backend-stack](modules/07-backend-stack.md)、[INTEGRATION §Deploy→All](INTEGRATION.md#deploy-all)
+> **文档定位：** 客户/运维部署 **云端 API 服务**（不含客户端安装包）  
+> **适用阶段：** S6  
+> **组件：** MongoDB + `server-backend`（NestJS :3001）+ 可选 Compat API（:9000）+ Nginx HTTPS  
+> **最后更新：** 2026-07-19  
+> **关联：** [06-deployment](modules/06-deployment.md) · [07-backend-stack](modules/07-backend-stack.md) · [COMPAT_API](COMPAT_API.md) · [ACCEPTANCE §S6](ACCEPTANCE.md)
+
+---
+
+## 0. 五分钟速览（先看这里）
+
+### 你要部署什么
+
+| 部署 | 说明 |
+|------|------|
+| **必须** | `server-backend` + **MongoDB** +（生产）**Nginx HTTPS** |
+| **可选** | Compat REST `:9000`（自动化/Playwright，见 [COMPAT_API](COMPAT_API.md)） |
+| **不在本机云端** | 指纹内核、`desktop-shell`、NSIS 安装包（在客户 Windows 上，见 S7） |
+
+### 最短生产步骤（Linux）
+
+```bash
+# 1) MongoDB 安装并建库用户（见 §3）
+# 2) 部署 backend
+cd /opt/virtualbrowser/server-backend
+npm ci --omit=dev && npm run build
+
+# 3) 写 .env（生产必须 mongo）
+cat > .env <<'EOF'
+PORT=3001
+STORAGE_DRIVER=mongo
+MONGODB_URI=mongodb://vb_app:改密码@127.0.0.1:27017/virtualbrowser?authSource=virtualbrowser
+DATA_DIR=/var/lib/virtualbrowser/data
+CORS_ORIGINS=*
+NODE_ENV=production
+# 可选自动化 API：
+# COMPAT_API_PORT=9000
+EOF
+
+sudo mkdir -p /var/lib/virtualbrowser/data/profiles
+npm start   # 或 systemd，见 §4.4
+
+# 4) Nginx 反代到 127.0.0.1:3001（见 §5）
+# 5) 验收
+curl -fsS https://api.你的域名/health
+# 预期：{"ok":true,"storage":"mongo","mongo":"connected",...}
+```
+
+### 当前部署地址（本项目）
+
+| 项 | 值 |
+|----|-----|
+| **管理 API** | `http://120.78.76.171:3001` |
+| **Compat API（可选）** | `http://120.78.76.171:9000` |
+| **客户端配置** | [`config/client.json`](../config/client.json) → `cloudApiBase` |
+
+```powershell
+# 用该 IP 重打安装包（客户机才能连上）
+cd D:\bytesio\VirtualBrowser\packaging\scripts
+.\build-client.ps1 -CloudApiBase "http://120.78.76.171:3001"
+```
+
+```bash
+# 服务器上 .env（Mongo 仍本机；API 对外 3001）
+PORT=3001
+STORAGE_DRIVER=mongo
+MONGODB_URI=mongodb://vb_app:密码@127.0.0.1:27017/virtualbrowser?authSource=virtualbrowser
+DATA_DIR=/var/lib/virtualbrowser/data
+CORS_ORIGINS=*
+NODE_ENV=production
+```
+
+**服务器侧检查：**
+
+1. 安全组 / 防火墙放行 **TCP 3001**（需要自动化再放行 **9000**）  
+2. `curl http://120.78.76.171:3001/health` 在外网应返回 `ok:true`  
+3. **明文 HTTP**：公网裸奔有风险；确认后仅作过渡，后续再上 HTTPS  
+
+### 没有域名可以用 HTTP + IP 吗？
+
+**可以。** 本项目当前即采用上表 IP。一般写法：`http://<公网或内网IP>:3001`，打安装包时 `-CloudApiBase` 须一致。
 
 ---
 
@@ -42,6 +118,7 @@ flowchart TB
 |------|------|--------------|
 | **Nginx** | TLS 终结、反向代理、可选静态托管 `server/dist` | 443（HTTPS） |
 | **server-backend** | 认证、用户/环境 CRUD、Profile 快照 API | 3001（内网） |
+| **Compat API（可选）** | Apifox 协议 REST（`api-key`），与 3001 **同进程** | 9000（建议仅内网或单独鉴权暴露） |
 | **MongoDB** | 用户、会话、环境元数据持久化 | 27017（内网） |
 | **磁盘 `DATA_DIR`** | Profile 快照 zip（`profiles/{tenantId}/{envId}/`） | — |
 
@@ -163,7 +240,9 @@ rsync -a /var/lib/virtualbrowser/data/profiles/ /backup/profiles/
 │   ├── package.json
 │   └── .env               # 生产环境变量（勿提交 git）
 └── data/                  # DATA_DIR 指向此处
-    └── profiles/
+    ├── profiles/
+    └── geoip/
+        └── GeoLite2-City.mmdb   # 自建 IP Geo（见 §4.6）
 ```
 
 ### 4.2 环境变量（`.env`）
@@ -184,11 +263,33 @@ DATA_DIR=/var/lib/virtualbrowser/data
 # Electron file:// 或自定义协议时可能需单独评估
 CORS_ORIGINS=https://app.example.com,https://admin.example.com
 
+# ── IP Geo（公开 GET /api/ip-geo；见 §4.6）──
+# GEOIP_MMDB_PATH=   # 默认 $DATA_DIR/geoip/GeoLite2-City.mmdb
+# MAXMIND_LICENSE_KEY=   # 仅 npm run geoip:update 下载用
+# MAXMIND_ACCOUNT_ID=    # 推荐：当前 MaxMind API 需要 Account ID
+# IP_GEO_API_KEY=        # 预留，本期不读
+
+# 可选：Compat 自动化 API（同进程第二端口；不设则默认仍监听 9000）
+# COMPAT_API_PORT=9000
+
 # 可选：Node 运行模式
 NODE_ENV=production
 ```
 
-完整变量表见 [07-backend-stack §6](modules/07-backend-stack.md#6-环境变量) 与 [`server-backend/.env.example`](../server-backend/.env.example)。
+| 变量 | 生产必填 | 说明 |
+|------|----------|------|
+| `PORT` | 建议 | 管理 API，默认 `3001` |
+| `STORAGE_DRIVER` | **是** | 必须 `mongo` |
+| `MONGODB_URI` | **是** | 含账号密码 |
+| `DATA_DIR` | **是** | 快照磁盘根目录（含 `geoip/`） |
+| `CORS_ORIGINS` | 建议 | 逗号分隔 Origin；`*` 或未设=放行全部 |
+| `GEOIP_MMDB_PATH` | 否 | 覆盖默认 MMDB 路径 |
+| `MAXMIND_LICENSE_KEY` | 否* | 仅下载脚本；*生产建议配置以便月更 |
+| `MAXMIND_ACCOUNT_ID` | 否* | 与 License Key 一并用于 `geoip:update` |
+| `COMPAT_API_PORT` | 否 | 默认 `9000`；若不想对外暴露，只让防火墙拦外网即可 |
+| `NODE_ENV` | 建议 | `production` |
+
+完整变量表见 [07-backend-stack](modules/07-backend-stack.md) 与 [`server-backend/.env.example`](../server-backend/.env.example)。
 
 ### 4.3 安装与启动
 
@@ -197,9 +298,14 @@ cd /opt/virtualbrowser/server-backend
 npm ci --omit=dev
 npm run build
 
-# 创建数据目录
-sudo mkdir -p /var/lib/virtualbrowser/data/profiles
+# 创建数据目录（含 IP Geo MMDB 目录）
+sudo mkdir -p /var/lib/virtualbrowser/data/profiles \
+              /var/lib/virtualbrowser/data/geoip
 sudo chown -R <运行用户>:<运行用户> /var/lib/virtualbrowser
+
+# 首次拉取 GeoLite2（需 MaxMind 账号，见 §4.6）
+# 在 .env 写入 MAXMIND_LICENSE_KEY（及推荐的 MAXMIND_ACCOUNT_ID）后：
+npm run geoip:update
 
 # 前台验证
 npm start
@@ -208,6 +314,7 @@ npm start
 # [server-backend] STORAGE_DRIVER=mongo
 # [server-backend] MONGODB_URI=...
 # [server-backend] CORS_ORIGINS=...
+# （有 MMDB 时）GeoLite2 MMDB loaded: ...
 ```
 
 ### 4.4 systemd 服务（Linux）
@@ -249,6 +356,35 @@ sudo systemctl status virtualbrowser-backend
 | viewer | viewer123 | viewer |
 
 **生产上线后务必修改默认密码**（通过管理 UI `/system/users` 或 Mongo 直接更新 bcrypt 哈希）。
+
+### 4.6 自建 IP Geo（MaxMind GeoLite2）
+
+管理端 / virtual-worker 可通过公开接口按出口 IP 预填语言、时区、经纬度，**无需**再依赖 `api.virtualbrowser.cc` / ipgeolocation。
+
+| 项 | 说明 |
+|----|------|
+| 端点 | `GET /api/ip-geo`（无鉴权；可选 `?ip=x.x.x.x` 调试） |
+| 数据文件 | 默认 `$DATA_DIR/geoip/GeoLite2-City.mmdb` |
+| 下载 | `npm run geoip:update`（读 `.env` 的 `MAXMIND_LICENSE_KEY`，推荐同时设 `MAXMIND_ACCOUNT_ID`） |
+| 降级 | MMDB 缺失或私网 IP 时仍返回 **HTTP 200** + 默认字段（`Etc/UTC`、`languages: en-US,en` 等），不崩溃 |
+| 客户端 | 默认渠道 **自建**：未配置 `apiLink` 时自动用 `cloudApiBase + /api/ip-geo`（见 `client.json`）；仍可选 VirtualBrowser / ipgeolocation 并填自定义 URL |
+
+**首次上线：**
+
+1. [MaxMind GeoLite2 注册](https://www.maxmind.com/en/geolite2/signup) 获取 License Key（及 Account ID）
+2. 写入 `server-backend/.env` → `npm run geoip:update`
+3. 重启 backend；日志应出现 `GeoLite2 MMDB loaded`
+4. 冒烟：`curl -fsS http://127.0.0.1:3001/api/ip-geo?ip=8.8.8.8`
+
+**每月更新（推荐 cron）：** GeoLite2 约每月发布；库过期会降低准确度。
+
+```bash
+# /etc/cron.monthly/virtualbrowser-geoip 或 crontab：
+0 3 2 * * cd /opt/virtualbrowser/server-backend && /usr/bin/npm run geoip:update >> /var/log/vb-geoip-update.log 2>&1
+# 可选：更新后 systemctl restart virtualbrowser-backend（maxmind reader 启动时打开；热替换需重启）
+```
+
+响应为**扁平 JSON**（勿包 `{ code, data }`），须含 `ip`、`country_name`、`country_code2`、`city`、`longitude`、`latitude`、`languages`、`time_zone.name`、`time_zone.offset_with_dst`，与 worker `normalizeGeo` 兼容。
 
 ---
 
@@ -350,9 +486,46 @@ VUE_APP_BASE_API = '/prod-api'
 | `GET /health` | `GET /health` | 健康检查 |
 | `POST /auth/login` | 同左 | 登录 |
 | `GET /auth/me` | 同左 | 当前用户（Bearer） |
+| `GET /api/ip-geo` | 同左 | 自建 IP 地理查询（公开；见 §4.6） |
 | `GET /api/environments` | 同左 | 环境列表 |
 | `GET/POST /api/profiles/:envId/snapshot` | 同左 | 快照下载/上传 |
 | `GET/POST/PUT/DELETE /api/users` | 同左 | 用户管理（admin） |
+
+### 5.4 Compat API `:9000`（可选）
+
+`server-backend` 启动后会在同进程再监听 `COMPAT_API_PORT`（默认 **9000**），协议见 [COMPAT_API.md](COMPAT_API.md)。
+
+**安全建议：**
+
+- 管理 API（3001）走 Nginx HTTPS 对外  
+- Compat（9000）默认 **只内网访问**，或单独 Nginx + IP 白名单  
+- 鉴权 Header：`api-key: <种子或管理端签发的 key>`（见 `data/local/initial-api-key.txt` 或 `POST /api/api-keys`）
+
+Nginx 可选反代示例（仅内网或另开子域）：
+
+```nginx
+# 谨慎对外；建议限制 allow 内网 IP
+server {
+    listen 443 ssl http2;
+    server_name compat.example.com;
+    # ssl_certificate ...;
+
+    location / {
+        allow 10.0.0.0/8;
+        deny all;
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+冒烟：
+
+```bash
+# 管理 API 登录拿 token 后，用 admin 签发 api-key；或读种子文件
+curl -s -H "api-key: YOUR_KEY" http://127.0.0.1:9000/api/getBrowserList
+```
 
 ---
 
@@ -454,6 +627,9 @@ sudo systemctl restart virtualbrowser-backend
 curl -fsS -X POST https://api.example.com/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
+
+# 5. 自建 IP Geo（有 MMDB 时应用公网 IP；无库时也应 200 + 默认字段）
+curl -fsS https://api.example.com/api/ip-geo?ip=8.8.8.8
 ```
 
 | 检查项 | 预期 |
@@ -464,6 +640,7 @@ curl -fsS -X POST https://api.example.com/auth/login \
 | 重启后用户仍在 | Mongo 持久化生效 |
 | CORS | 客户端 Origin 不被拦截 |
 | 快照目录可写 | `DATA_DIR/profiles/` 有写权限 |
+| `GET /api/ip-geo` | HTTP 200；扁平 JSON 含 `languages` / `time_zone`（见 §4.6） |
 
 ---
 
@@ -512,29 +689,45 @@ sudo systemctl reload nginx
 
 ---
 
-## 10. 交付物核对
+## 10. Windows Server 快速部署（无 Docker 时）
 
-| 交付物 | 路径 / 说明 |
-|--------|-------------|
-| 部署 SOP | 本文 `docs/CLOUD_DEPLOY.md` |
-| 后端进程 | `server-backend` + systemd |
-| 数据库 | MongoDB `virtualbrowser` 库 |
-| 快照存储 | `DATA_DIR/profiles/` |
-| HTTPS 入口 | Nginx `api.example.com` |
-| 验收报告 | `docs/acceptance-reports/S6-*.md` |
+若服务器是 Windows：
 
-**不在 S6 范围（后续阶段）：**
+1. 安装 [Node.js 18+](https://nodejs.org/) 与 [MongoDB Community](https://www.mongodb.com/try/download/community)  
+2. 复制仓库中的 `server-backend/` 到如 `D:\vb\server-backend`  
+3. 配置 `.env`（`STORAGE_DRIVER=mongo` + `MONGODB_URI` + `DATA_DIR`）  
+4. `npm ci --omit=dev` → `npm run build` → `npm start`  
+5. 用 **IIS / Caddy / Nginx for Windows** 做 HTTPS 反代到 `127.0.0.1:3001`  
+6. 可用 `nssm` 或计划任务保活 `node dist/main.js`  
 
-- S7 客户端安装包与 `client.json` API 基址注入
-- S8 Compat API `:9000` 暴露（可选，见 [08-compat-api](modules/08-compat-api.md)）
-- 生产 native 代理（见 [06-deployment §5 待办 6.3–6.4](modules/06-deployment.md)）
+本机无 Docker 时，开发验收也可用仓库内 `server-backend/scripts/start-mongo-prod.js`（见 [S6-prod 报告](acceptance-reports/S6-prod-2026-07-12.md)），**正式客户环境请用独立 MongoDB 服务**。
 
 ---
 
-## 11. 相关文档
+## 11. 交付物核对
+
+| 交付物 | 路径 / 说明 |
+|--------|-------------|
+| **服务端部署手册** | 本文 `docs/CLOUD_DEPLOY.md` |
+| 后端进程 | `server-backend` + systemd / Windows 服务 |
+| 数据库 | MongoDB `virtualbrowser` 库 |
+| 快照存储 | `DATA_DIR/profiles/` |
+| IP Geo MMDB | `DATA_DIR/geoip/GeoLite2-City.mmdb`（`npm run geoip:update`） |
+| HTTPS 入口 | Nginx `api.example.com` |
+| 验收报告 | `docs/acceptance-reports/S6-*.md` |
+
+**衔接客户端（S7，不在本手册安装）：**
+
+- 部署完成后把 `https://api.xxx` 写入 `build-client.ps1 -CloudApiBase`  
+- 见 [06-deployment](modules/06-deployment.md)、[`packaging/scripts/build-client.ps1`](../packaging/scripts/build-client.ps1)
+
+---
+
+## 12. 相关文档
 
 - [06-deployment — 模块部署总览](modules/06-deployment.md)
 - [07-backend-stack — 双模式存储与 API](modules/07-backend-stack.md)
+- [COMPAT_API — 自动化 REST](COMPAT_API.md)
 - [INTEGRATION — Deploy→All / Deploy→Client](INTEGRATION.md)
 - [ACCEPTANCE — S6 验收步骤](ACCEPTANCE.md)
 - [`server-backend/README.md`](../server-backend/README.md)

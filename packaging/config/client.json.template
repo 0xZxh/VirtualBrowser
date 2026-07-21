@@ -1,5 +1,5 @@
-{
+﻿{
   "cloudApiBase": "https://api.example.com",
-  "windowTitle": "VirtualBrowser",
+  "windowTitle": "指纹浏览器",
   "productVersion": "0.1.0"
 }

@@ -1,17 +1,16 @@
 <template>
   <div class="app-container">
-    <div class="filter-container">
-      <div>
+    <div class="toolbar">
+      <div class="toolbar-primary">
         <el-button
           v-permission="['admin', 'operator']"
-          class="filter-item"
           type="primary"
           icon="el-icon-circle-plus"
           @click="handleCreate"
         >
           {{ $t('browser.add') }}
         </el-button>
-        <el-dropdown v-permission="['admin', 'operator']" class="filter-item">
+        <el-dropdown v-permission="['admin', 'operator']">
           <el-button type="primary">
             {{ $t('browser.batchActions') }}
             <i class="el-icon-arrow-down el-icon--right" />
@@ -32,28 +31,29 @@
           </el-dropdown-menu>
         </el-dropdown>
       </div>
-      <div style="display: flex">
+      <div class="toolbar-filters">
         <el-select
           v-model="listQuery.group"
           filterable
           clearable
+          class="toolbar-select"
           :placeholder="$t('group.filter')"
-          style="width: 150px; margin-right: 10px"
           @change="handleFilter"
         >
           <el-option v-for="item in GroupList" :key="item.id" :value="item.name" />
         </el-select>
         <el-input
           v-model="listQuery.title"
+          class="toolbar-input"
           :placeholder="$t('browser.name')"
-          style="width: 200px"
-          class="filter-item"
           @keyup.enter.native="handleFilter"
         />
-        <el-button v-waves class="filter-item" icon="el-icon-search" @click="handleFilter">
+        <el-button v-waves plain icon="el-icon-search" @click="handleFilter">
           {{ $t('browser.search') }}
         </el-button>
-        <el-button @click="showSettingsDialog">IP查询API设置</el-button>
+      </div>
+      <div class="toolbar-secondary">
+        <el-button plain @click="showSettingsDialog">IP查询API设置</el-button>
         <el-upload
           v-permission="['admin', 'operator']"
           action=""
@@ -62,9 +62,9 @@
           :show-file-list="false"
           :on-change="onImport"
         >
-          <el-button style="margin-left: 10px">{{ $t('browser.import.import') }}</el-button>
+          <el-button plain>{{ $t('browser.import.import') }}</el-button>
         </el-upload>
-        <el-button v-permission="['admin', 'operator']" style="margin-left: 10px" @click="onExport">
+        <el-button v-permission="['admin', 'operator']" plain @click="onExport">
           {{ $t('browser.import.export') }}
         </el-button>
       </div>
@@ -74,10 +74,9 @@
       :key="tableKey"
       v-loading="listLoading"
       :data="list"
-      border
       fit
       highlight-current-row
-      style="width: 100%"
+      class="browser-table"
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="60" align="center" />
@@ -104,18 +103,9 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="代理" width="300px">
+      <el-table-column label="代理" width="210px" show-overflow-tooltip>
         <template slot-scope="{ row }">
-          <span>
-            <template v-if="!row.proxy || row.proxy.mode === 0">默认</template>
-            <template v-else-if="row.proxy.mode === 1">不使用代理</template>
-            <template v-else>
-              {{ row.proxy.protocol }}
-              {{
-                row.proxy.host && row.proxy.port ? ' ' + row.proxy.host + ':' + row.proxy.port : ''
-              }}
-            </template>
-          </span>
+          <span class="proxy-cell">{{ formatProxyLabel(row) }}</span>
         </template>
       </el-table-column>
       <el-table-column
@@ -130,24 +120,30 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('browser.cloudSync')" width="240" align="center">
+      <el-table-column :label="$t('browser.cloudSync')" width="170" align="center">
         <template slot-scope="{ row }">
-          <div v-if="row.syncLoading" v-loading="true" style="min-height: 28px" />
-          <template v-else>
-            <div v-if="row.syncStatus">
-              <el-tag :type="syncStatusTagType(row.syncStatus.status)" size="mini">
-                {{ syncStatusLabel(row.syncStatus.status) }}
-              </el-tag>
-              <div class="sync-version-hint">{{ formatSyncVersion(row.syncStatus) }}</div>
-            </div>
+          <div v-if="row.syncLoading" v-loading="true" class="sync-loading" />
+          <div v-else class="sync-cell">
+            <el-tooltip v-if="row.syncStatus" effect="dark" placement="top">
+              <div slot="content" class="sync-tooltip">
+                <div>{{ formatSyncVersion(row.syncStatus) }}</div>
+                <div>{{ $t('browser.cloudSyncHint') }}</div>
+              </div>
+              <div class="sync-status-block">
+                <el-tag :type="syncStatusTagType(row.syncStatus.status)" size="mini">
+                  {{ syncStatusLabel(row.syncStatus.status) }}
+                </el-tag>
+                <div class="sync-version-hint">{{ formatSyncVersion(row.syncStatus) }}</div>
+              </div>
+            </el-tooltip>
             <span v-else>—</span>
             <el-dropdown
               v-permission="['admin', 'operator']"
               trigger="click"
-              style="margin-top: 6px"
+              class="sync-dropdown"
               @command="cmd => handleSyncCommand(cmd, row)"
             >
-              <el-button size="mini" :loading="row.syncActionLoading">
+              <el-button size="mini" plain :loading="row.syncActionLoading">
                 {{ $t('browser.cloudSync') }}
                 <i class="el-icon-arrow-down el-icon--right" />
               </el-button>
@@ -161,9 +157,12 @@
                 <el-dropdown-item command="refresh" divided>
                   {{ $t('browser.cloudSyncRefresh') }}
                 </el-dropdown-item>
+                <el-dropdown-item disabled>
+                  <span class="sync-scope-hint">{{ $t('browser.cloudSyncHint') }}</span>
+                </el-dropdown-item>
               </el-dropdown-menu>
             </el-dropdown>
-          </template>
+          </div>
         </template>
       </el-table-column>
 
@@ -191,17 +190,23 @@
       <el-table-column
         :label="$t('browser.actions')"
         align="center"
-        width="200"
+        width="160"
         class-name="small-padding fixed-width"
       >
         <template slot-scope="{ row, $index }">
-          <el-button v-permission="['admin', 'operator']" type="primary" @click="handleUpdate(row)">
+          <el-button
+            v-permission="['admin', 'operator']"
+            plain
+            size="mini"
+            @click="handleUpdate(row)"
+          >
             {{ $t('browser.edit') }}
           </el-button>
           <el-button
             v-if="row.status != 'deleted'"
             v-permission="['admin']"
-            type="danger"
+            type="text"
+            class="action-delete"
             @click="handleDelete(row, $index)"
           >
             {{ $t('browser.delete') }}
@@ -753,11 +758,19 @@
     </el-dialog>
 
     <el-dialog v-model="showSetDialog" title="IP查询API设置" :visible.sync="showSetDialog">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+        title="默认使用自建 IP 库（cloudApiBase + /api/ip-geo）。此项不是云端登录地址；也可改选 VirtualBrowser / ipgeoLocation 并填写对应完整 URL。"
+      />
       <el-form :model="form">
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="查询渠道">
               <el-select v-model="Channel" placeholder="请选择">
+                <el-option label="自建" value="selfhost" />
                 <el-option label="VirtualBrowser" value="virtualbrowser" />
                 <el-option label="ipgeoLocation" value="ipgeolocation" />
               </el-select>
@@ -769,9 +782,23 @@
               <a href="https://virtualbrowser.cc" target="_blank" style="color: #42b983">官网</a>
               获取API Key
             </div>
+            <div
+              v-else-if="Channel === 'ipgeolocation'"
+              style="color: #909399; font-size: 13px; line-height: 1.5"
+            >
+              需填写 ipgeolocation.io 完整 URL（含 apiKey）
+            </div>
+            <div
+              v-else-if="Channel === 'selfhost'"
+              style="color: #909399; font-size: 13px; line-height: 1.5"
+            >
+              未填写时自动使用 cloudApiBase + /api/ip-geo
+              <br />
+              一般无需再去第三方官网申请 Key
+            </div>
           </el-col>
         </el-row>
-        <el-input v-model="apiLink" placeholder="请输入IP查询API链接" />
+        <el-input v-model="apiLink" placeholder="自建可留空（自动推导）；或填写完整 URL" />
       </el-form>
       <span slot="footer" class="dialog-footer">
         <el-button @click="showSetDialog = false">取消</el-button>
@@ -800,12 +827,14 @@ import {
   getBrowserList,
   getGlobalData,
   setGlobalData,
+  getDefaultIpGeoApiLink,
   addBrowser,
   updateBrowser,
   deleteBrowser,
   chromeSend,
   chromeSendTimeout,
   updateRuningState,
+  onBrowserExited,
   getGroupList,
   getLocalCrxList,
   getProfileSyncStatus,
@@ -836,6 +865,7 @@ import uaFullVersions from '@/utils/ua-full-versions.json'
 import WebGLRenders from '@/utils/webgl.json'
 import { getFontList } from '@/utils/fonts'
 import { compareVersions } from 'compare-versions'
+import { normalizeCookieEntry, normalizeCookieList } from '@lib/cookie-normalize'
 
 let IPGeo = {}
 let fontList = []
@@ -910,7 +940,7 @@ export default {
         setDefaultValue(cookie, 'secure', false)
         setDefaultValue(cookie, 'httpOnly', false)
 
-        return cookie
+        return normalizeCookieEntry(cookie)
       })
 
       const checkNameValue = json.every(item => {
@@ -922,8 +952,9 @@ export default {
         return
       }
 
-      // this.form.cookie.mode = 1
       this.form.cookie.value = json
+      // Rewrite jsonStr so the user sees sanitized domain / SameSite+Secure
+      this.form.cookie.jsonStr = JSON.stringify(json, null, 2)
       callback()
     }
     return {
@@ -933,7 +964,7 @@ export default {
       dialogBatchSetGroupVisible: false,
       selectedGroup: '默认分组',
       apiLink: '',
-      Channel: 'virtualbrowser',
+      Channel: 'selfhost',
       saveApi: false,
       selectedRows: [],
       chromeVer: '',
@@ -1050,7 +1081,7 @@ export default {
         "session": false,
         "httpOnly": false,
         "secure": false,
-        "sameSite": "None"
+        "sameSite": "Lax"
       }, {
         "name": "cookie2",
         "value": "2",
@@ -1059,7 +1090,7 @@ export default {
         "session": false,
         "httpOnly": false,
         "secure": false,
-        "sameSite": "None"
+        "sameSite": "Lax"
       }]`,
       copied: false,
       checkProxyState: {
@@ -1143,13 +1174,19 @@ export default {
     }
   },
   beforeCreate() {
+    this._launchingIds = new Set()
     window._updateState = runingIds => {
+      const ids = Array.isArray(runingIds) ? runingIds.map(String) : []
       this.list = (this.list || []).map(item => {
-        item.isRunning = runingIds.includes(item.id.toString())
+        const id = String(item.id)
+        item.isRunning = ids.includes(id)
         if (item.isRunning) {
           item.runLoading = false
+          this._launchingIds.delete(id)
+        } else if (!this._launchingIds.has(id)) {
+          // 非启动请求中且已不在运行列表 → 清「启动中」（含进程退出）
+          item.runLoading = false
         }
-
         return item
       })
     }
@@ -1168,15 +1205,20 @@ export default {
     const storedApiLink = store.apiLink
     if (storedApiLink) {
       this.apiLink = storedApiLink
-      this.Channel = store.Channel
+      this.Channel = store.Channel || 'selfhost'
+    } else {
+      this.Channel = store.Channel || 'selfhost'
+      this.apiLink = await getDefaultIpGeoApiLink()
     }
 
-    const res = await fetch(this.apiLink)
-      .then(req => req.json())
-      .catch(console.warn)
+    if (this.apiLink) {
+      const res = await fetch(this.apiLink)
+        .then(req => req.json())
+        .catch(console.warn)
 
-    if (res) {
-      IPGeo = res
+      if (res) {
+        IPGeo = res
+      }
     }
 
     fontList = getFontList()
@@ -1224,6 +1266,22 @@ export default {
       id: 0,
       name: this.$t('group.default')
     })
+    this._unsubBrowserExited = onBrowserExited(() => {
+      updateRuningState().catch(() => {})
+    })
+    this._runStateTimer = setInterval(() => {
+      updateRuningState().catch(() => {})
+    }, 3000)
+  },
+  beforeDestroy() {
+    if (this._runStateTimer) {
+      clearInterval(this._runStateTimer)
+      this._runStateTimer = null
+    }
+    if (typeof this._unsubBrowserExited === 'function') {
+      this._unsubBrowserExited()
+      this._unsubBrowserExited = null
+    }
   },
   methods: {
     async getList() {
@@ -1232,7 +1290,7 @@ export default {
         this.list = await getBrowserList()
         this.GlobalData = await getGlobalData()
         this.apiLink = this.GlobalData.apiLink || ''
-        this.Channel = this.GlobalData.Channel || ''
+        this.Channel = this.GlobalData.Channel || 'selfhost'
         await this.processUpdateData()
         await updateRuningState()
         this.loadSyncStatuses()
@@ -1289,6 +1347,13 @@ export default {
       const cloud = syncStatus.cloudVersion != null ? syncStatus.cloudVersion : '—'
       return this.$t('browser.cloudSyncVersion', { local, cloud })
     },
+    formatProxyLabel(row) {
+      if (!row.proxy || row.proxy.mode === 0) return '默认'
+      if (row.proxy.mode === 1) return '不使用代理'
+      const hostPort =
+        row.proxy.host && row.proxy.port ? ` ${row.proxy.host}:${row.proxy.port}` : ''
+      return `${row.proxy.protocol || ''}${hostPort}`.trim() || '—'
+    },
     async handleSyncCommand(command, row) {
       if (row.isRunning) {
         this.$message.warning(this.$t('browser.cloudSyncRunningBlock'))
@@ -1307,7 +1372,10 @@ export default {
         const status = await getProfileSyncStatus(envId)
         this.$set(row, 'syncStatus', status)
       } catch (err) {
-        this.$message.error((err && err.message) || String(err))
+        const raw = err && err.message ? err.message : String(err)
+        const msg =
+          raw === 'timeout' || err === 'timeout' ? this.$t('browser.cloudSyncTimeout') : raw
+        this.$message.error(msg)
       } finally {
         this.$set(row, 'syncActionLoading', false)
       }
@@ -1363,7 +1431,8 @@ export default {
         },
         cookie: {
           mode: 0,
-          value: ''
+          value: '',
+          jsonStr: ''
         },
         homepage: {
           mode: 0,
@@ -1511,16 +1580,20 @@ export default {
         if (valid) {
           this.form.timestamp = Date.now()
           this.preProcessData(this.form)
-          await addBrowser(this.form, this.$t('browser.browser'))
-
-          this.getList()
-          this.dialogFormVisible = false
-          this.$notify({
-            title: this.$t('browser.success'),
-            message: this.$t('browser.create') + this.$t('browser.success'),
-            type: 'success',
-            duration: 2000
-          })
+          try {
+            await addBrowser(this.form, this.$t('browser.browser'))
+            this.getList()
+            this.dialogFormVisible = false
+            this.$notify({
+              title: this.$t('browser.success'),
+              message: this.$t('browser.create') + this.$t('browser.success'),
+              type: 'success',
+              duration: 2000
+            })
+          } catch (err) {
+            console.error('[createBrowser]', err)
+            this.$message.error('创建失败: ' + (err && err.message ? err.message : String(err)))
+          }
         } else {
           const arr = Object.values(result)
             .map(item => this.$t('browser.' + item[0].field) + item[0].message)
@@ -1632,6 +1705,40 @@ export default {
         proxy.url = url
       }
 
+      // Cookie 表单绑 jsonStr，落盘用 value：mode=1 时解析写入数组
+      if (data.cookie) {
+        if (Number(data.cookie.mode) === 1) {
+          const raw =
+            data.cookie.jsonStr != null && String(data.cookie.jsonStr).trim() !== ''
+              ? data.cookie.jsonStr
+              : typeof data.cookie.value === 'string'
+              ? data.cookie.value
+              : null
+          if (raw != null && typeof raw === 'string' && String(raw).trim() !== '') {
+            try {
+              // eslint-disable-next-line no-eval
+              const json = eval(`(${raw})`)
+              if (Array.isArray(json)) {
+                const normalized = normalizeCookieList(json)
+                data.cookie.value = normalized
+                data.cookie.jsonStr = JSON.stringify(normalized, null, 2)
+              }
+            } catch (err) {
+              if (!Array.isArray(data.cookie.value)) {
+                console.warn('[preProcessData] cookie jsonStr parse failed', err)
+              } else {
+                data.cookie.value = normalizeCookieList(data.cookie.value)
+              }
+            }
+          } else if (Array.isArray(data.cookie.value)) {
+            data.cookie.value = normalizeCookieList(data.cookie.value)
+          }
+        } else {
+          data.cookie.value = ''
+          data.cookie.jsonStr = ''
+        }
+      }
+
       data['sec-ch-ua'].value = data['sec-ch-ua'].value.filter(item => {
         return item.brand && item.version
       })
@@ -1645,9 +1752,19 @@ export default {
         this.form = Object.assign(this.form, row) // copy obj
         currentOs = this.form.os || 'Win 11'
         this.form.crxIds = (row.crxIds || []).map(String)
-        const cookie = this.form.cookie.value
-        if (cookie && typeof cookie === 'object') {
-          this.form.cookie.value = JSON.stringify(this.form.cookie.value)
+        // 编辑回填：落盘 cookie.value → 表单 cookie.jsonStr
+        if (!this.form.cookie || typeof this.form.cookie !== 'object') {
+          this.form.cookie = { mode: 0, value: '', jsonStr: '' }
+        }
+        const cookie = this.form.cookie
+        if (cookie.value != null && cookie.value !== '') {
+          if (typeof cookie.value === 'object') {
+            cookie.jsonStr = JSON.stringify(cookie.value, null, 2)
+          } else if (typeof cookie.value === 'string') {
+            cookie.jsonStr = cookie.value
+          }
+        } else if (cookie.jsonStr == null) {
+          cookie.jsonStr = ''
         }
         this.form.timestamp = new Date(this.form.timestamp)
         this.$refs['dataForm'].clearValidate()
@@ -1660,15 +1777,20 @@ export default {
           console.log('submit', tempData)
           tempData.timestamp = +new Date(tempData.timestamp) // change Thu Nov 30 2017 16:41:05 GMT+0800 (CST) to 1512031311464
           this.preProcessData(tempData)
-          await updateBrowser(tempData)
-          this.getList()
-          this.dialogFormVisible = false
-          this.$notify({
-            title: this.$t('browser.success'),
-            message: this.$t('browser.update') + this.$t('browser.success'),
-            type: 'success',
-            duration: 2000
-          })
+          try {
+            await updateBrowser(tempData)
+            this.getList()
+            this.dialogFormVisible = false
+            this.$notify({
+              title: this.$t('browser.success'),
+              message: this.$t('browser.update') + this.$t('browser.success'),
+              type: 'success',
+              duration: 2000
+            })
+          } catch (err) {
+            console.error('[updateBrowser]', err)
+            this.$message.error('更新失败: ' + (err && err.message ? err.message : String(err)))
+          }
         } else {
           const arr = Object.values(result)
             .map(item => this.$t('browser.' + item[0].field) + item[0].message)
@@ -1696,12 +1818,36 @@ export default {
         })
         .catch(() => {})
     },
-    handleLaunch(row) {
+    async handleLaunch(row) {
       if (row.proxy && row.proxy.API) {
-        this.GetAPIProxy(row)
+        const ok = await this.GetAPIProxy(row)
+        if (!ok) {
+          this.$message.error('获取 API 代理失败，已中止启动')
+          return
+        }
       }
-      chromeSend('launchBrowser', row.id.toString())
+      const id = String(row.id)
+      this._launchingIds.add(id)
       row.runLoading = true
+      // spawn 很快；站点云拉取已从启动路径移除，60s 足够
+      try {
+        await chromeSendTimeout('launchBrowser', 60000, id)
+        row.runLoading = false
+        row.isRunning = true
+        this._launchingIds.delete(id)
+        await updateRuningState()
+      } catch (err) {
+        console.warn('[launchBrowser]', err)
+        const raw = err && err.message ? err.message : String(err)
+        const tip =
+          raw === 'timeout' || err === 'timeout'
+            ? '启动超时。若刚点过云同步请稍候再试；站点数据请用「云同步」拉取，勿依赖启动自动下载。'
+            : raw
+        this.$message.error('启动失败: ' + tip)
+        row.runLoading = false
+        row.isRunning = false
+        this._launchingIds.delete(id)
+      }
     },
     onReRandomComputerName() {
       this.form['device-name'].value = genRandomComputerName()
@@ -1871,23 +2017,26 @@ export default {
       try {
         const data = await this.fetchAndParseAPI(row.proxy.API)
         this.updateProxyData(row.proxy, data)
-        this.onUpdateRowData(row)
+        await this.onUpdateRowData(row)
         this.getList()
+        return true
       } catch (error) {
         console.error('请求代理 API 失败:', error)
-        return
+        this.$message.error(
+          '请求代理 API 失败: ' + (error && error.message ? error.message : String(error))
+        )
+        return false
       }
-      this.checkProxy(row)
     },
-    onUpdateRowData(row) {
+    async onUpdateRowData(row) {
       if (!row || typeof row !== 'object') {
         console.error('The provided row is undefined or not an object.')
-        return
+        throw new Error('invalid row')
       }
 
       row.timestamp = +new Date()
       this.preProcessData(row)
-      updateBrowser(row)
+      await updateBrowser(row)
       this.getList()
       this.dialogFormVisible = false
       this.$notify({
@@ -2004,13 +2153,23 @@ export default {
     },
     async showSettingsDialog() {
       const store = await getGlobalData()
-      this.apiLink = store.apiLink || ''
-      console.log('this.apiLink', store)
+      this.Channel = store.Channel || 'selfhost'
+      this.apiLink = store.apiLink || (await getDefaultIpGeoApiLink())
       this.showSetDialog = true
     },
     async saveSettings() {
       const GlobalData = await getGlobalData()
-      if (this.Channel === 'virtualbrowser' && !this.apiLink.includes('virtualbrowser')) {
+      const channel = this.Channel || 'selfhost'
+      let link = (this.apiLink || '').trim()
+
+      // 自建：未填 URL 时自动落到 cloudApiBase + /api/ip-geo
+      if (channel === 'selfhost' && !link) {
+        link = await getDefaultIpGeoApiLink()
+        this.apiLink = link
+      }
+
+      // selfhost：不做第三方域名校验，允许任意自建 /api/ip-geo URL
+      if (channel === 'virtualbrowser' && !link.includes('virtualbrowser')) {
         this.$notify({
           title: '错误',
           message: '请输入正确的渠道API链接',
@@ -2018,7 +2177,7 @@ export default {
           duration: 2000
         })
         return
-      } else if (this.Channel === 'ipgeolocation' && !this.apiLink.includes('ipgeolocation')) {
+      } else if (channel === 'ipgeolocation' && !link.includes('ipgeolocation')) {
         this.$notify({
           title: '错误',
           message: '请输入正确的渠道API链接',
@@ -2027,33 +2186,51 @@ export default {
         })
         return
       }
-      if (this.apiLink && this.apiLink !== GlobalData.apiLink) {
-        await setGlobalData('apiLink', this.apiLink)
-        console.log('API链接已保存:', this.apiLink)
+
+      if (!link) {
+        this.$notify({
+          title: '错误',
+          message: '请填写 IP 查询 API 完整 URL',
+          type: 'error',
+          duration: 2000
+        })
+        return
       }
-      if (this.Channel && this.Channel !== GlobalData.Channel) {
-        await setGlobalData('Channel', this.Channel)
+
+      this.Channel = channel
+      this.apiLink = link
+
+      if (link !== GlobalData.apiLink) {
+        await setGlobalData('apiLink', link)
+      }
+      if (channel !== GlobalData.Channel) {
+        await setGlobalData('Channel', channel)
       }
 
       this.$notify({
         title: '保存成功',
-        message: '保存成功',
+        message:
+          'IP 查询 API 已写入本机 User Data/global.dat（与云端登录地址无关）。启动默认主页时会自动注入到指纹窗口。',
         type: 'success',
-        duration: 2000
+        duration: 4000
       })
       this.showSetDialog = false
     },
     async checkApiLinkSet() {
       const store = await getGlobalData()
-      const storedApiLink = store.apiLink
-      if (storedApiLink) {
-        this.apiLink = storedApiLink
-        this.Channel = store.Channel
+      // native 侧会在缺省时写入自建默认；此处再兜底一次，避免强制弹窗
+      let link = (store.apiLink || '').trim()
+      const channel = store.Channel || 'selfhost'
+      if (!link) {
+        link = await getDefaultIpGeoApiLink()
+        await setGlobalData('apiLink', link)
+        if (!store.Channel) {
+          await setGlobalData('Channel', 'selfhost')
+        }
       }
-      const apiLink = this.apiLink
-      if (!apiLink) {
-        this.showSetDialog = true
-      }
+      this.apiLink = link
+      this.Channel = channel
+      // 已能自动推导自建 URL，不再强制弹设置窗
     },
     async searchList() {
       try {
@@ -2133,12 +2310,78 @@ export default {
 <style lang="scss" scoped>
 @import '@/styles/element-variables.scss';
 
-.filter-container {
+.toolbar {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
 
-  .filter-item:not(:last-child) {
-    margin-right: 10px;
+  .toolbar-primary,
+  .toolbar-filters,
+  .toolbar-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .toolbar-filters {
+    flex: 1 1 auto;
+    min-width: 280px;
+  }
+
+  .toolbar-secondary {
+    margin-left: auto;
+  }
+
+  .toolbar-select {
+    width: 150px;
+  }
+
+  .toolbar-input {
+    width: 200px;
+  }
+}
+
+.browser-table {
+  width: 100%;
+}
+
+.proxy-cell {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.sync-loading {
+  min-height: 28px;
+}
+
+.sync-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.sync-status-block {
+  cursor: default;
+}
+
+.sync-dropdown {
+  margin-top: 2px;
+}
+
+.action-delete {
+  color: #f56c6c !important;
+  padding: 0 4px;
+
+  &:hover {
+    color: #f78989 !important;
   }
 }
 
@@ -2232,10 +2475,24 @@ export default {
 }
 
 .sync-version-hint {
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 12px;
   color: #909399;
-  line-height: 1.4;
+  line-height: 1.3;
+}
+
+.sync-tooltip {
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.sync-scope-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #c0c4cc;
+  line-height: 1.35;
+  white-space: normal;
+  max-width: 220px;
 }
 
 .qq-group {

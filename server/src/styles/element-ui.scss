@@ -5,6 +5,67 @@
   font-weight: 400 !important;
 }
 
+// buttons — slightly rounder corners
+.el-button {
+  border-radius: 6px;
+}
+
+.el-button--mini {
+  border-radius: 4px;
+  padding: 7px 12px;
+}
+
+// inputs / selects — compact alignment
+.el-input__inner,
+.el-textarea__inner {
+  border-radius: 6px;
+}
+
+.el-tag {
+  border-radius: 4px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0 6px;
+}
+
+// tables — light horizontal separators, soft header
+.el-table {
+  th {
+    background-color: #f8fafc !important;
+    color: #64748b;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  td,
+  th.is-leaf {
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  &::before {
+    background-color: transparent;
+  }
+
+  &.el-table--border {
+    border-color: #e2e8f0;
+
+    &::after,
+    .el-table__fixed-right::before,
+    .el-table__fixed::before {
+      background-color: #e2e8f0;
+    }
+
+    td,
+    th {
+      border-right: 1px solid #f1f5f9;
+    }
+  }
+
+  .el-table__row:hover > td {
+    background-color: #f8fafc !important;
+  }
+}
+
 .el-upload {
   input[type="file"] {
     display: none !important;

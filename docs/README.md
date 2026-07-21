@@ -23,7 +23,7 @@
 | 05 | [profile-cloud-sync](modules/05-profile-cloud-sync.md) | ✅ S3/S4 | 自动 token + 同步 UI |
 | 06 | [deployment](modules/06-deployment.md) | 🟡 S6/S7 进行中 | mongo HTTP ✅；Setup.exe ✅；HTTPS/实机待验 |
 | 07 | [backend-stack](modules/07-backend-stack.md) | 🟢 基本完成 | Nest + SQLite / Mongo |
-| 08 | [compat-api](modules/08-compat-api.md) → [COMPAT_API](COMPAT_API.md) | 🟢 第一期 done | API-01–08 ✅；第二期 pending |
+| 08 | [compat-api](modules/08-compat-api.md) → [COMPAT_API](COMPAT_API.md) | 🟢 API-01–19 | 第一期+第二期 ✅；Cookie 20/21 pending |
 
 ---
 
@@ -93,7 +93,7 @@ flowchart TB
 | 角色看不到菜单 / 按钮 | [03-rbac-permissions](modules/03-rbac-permissions.md) |
 | 插件上传 / launch 注入 | [04-crx-extensions](modules/04-crx-extensions.md) |
 | Cookie 跨机不同步 | [05-profile-cloud-sync](modules/05-profile-cloud-sync.md) |
-| **部署云端** | [06-deployment](modules/06-deployment.md) + [CLOUD_DEPLOY](CLOUD_DEPLOY.md) |
+| **部署服务端 / 云端 API** | **[CLOUD_DEPLOY.md](CLOUD_DEPLOY.md)**（服务端部署手册）· [06-deployment](modules/06-deployment.md) |
 | **打客户端安装包** | [06-deployment](modules/06-deployment.md) §客户端线 |
 | **自动化 / Playwright API** | [COMPAT_API](COMPAT_API.md) + [08-compat-api](modules/08-compat-api.md) |
 | 后端存储 | [07-backend-stack](modules/07-backend-stack.md) |
@@ -111,7 +111,7 @@ flowchart TB
 | INFRA-A/B/C | ✅ | native-runtime + api-key + :9000 |
 | **S6** | 🟢 | mongo HTTP ✅；**HTTPS 待运维** |
 | **S7** | 🟡 | **Setup-0.1.0.exe 已产出**；实机/生产 API 待验 |
-| **S8** | 🟡 第一期基本通过 | API-01–08 ✅；第二期未做 |
+| **S8** | 🟢 第一期+第二期 | API-01–19 ✅；Cookie 第三期未做 |
 
 ```mermaid
 flowchart LR
@@ -123,7 +123,7 @@ flowchart LR
   HTTPS --> E2E2
 ```
 
-**下一拨 Multitask：** E2E-2 实机 + 生产 HTTPS（见 [`AGENT_COORDINATION.md`](AGENT_COORDINATION.md)）
+**下一拨 Multitask：** 复制 [`acceptance-reports/E2E-2-PROMPT.md`](acceptance-reports/E2E-2-PROMPT.md) 开跑 E2E-2（API=`http://120.78.76.171:3001`）
 
 ---
 

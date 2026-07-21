@@ -12,7 +12,9 @@ function readClientConfig() {
   for (const file of candidates) {
     if (fs.existsSync(file)) {
       try {
-        return JSON.parse(fs.readFileSync(file, 'utf8'))
+        // PowerShell Set-Content -Encoding UTF8 会写 BOM，需剥离否则 JSON.parse 失败
+        const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')
+        return JSON.parse(raw)
       } catch (err) {
         console.warn('[desktop-shell] invalid client.json:', file, err.message)
       }
@@ -37,9 +39,25 @@ function resolveUiIndex() {
 /** @type {BrowserWindow | null} */
 let mainWindow = null
 
+function resolveAppIcon() {
+  const candidates = [
+    path.join(__dirname, '../assets/app.ico'),
+    path.join(appRoot, 'packaging/assets/app.ico'),
+    path.join(appRoot, 'assets/app.ico'),
+    path.join(appRoot, 'resources/app/assets/app.ico')
+  ]
+  for (const file of candidates) {
+    if (fs.existsSync(file)) {
+      return file
+    }
+  }
+  return undefined
+}
+
 function createWindow() {
   const clientConfig = readClientConfig()
   const indexHtml = resolveUiIndex()
+  const appIcon = resolveAppIcon()
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -47,6 +65,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
+    ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -76,12 +95,26 @@ ipcMain.handle('native-call', async (_event, payload) => {
   return handleNativeIpc(payload)
 })
 
+function notifyBrowserExited(envId) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('browser-exited', { envId: String(envId) })
+  }
+}
+
 app.whenReady().then(() => {
   const clientConfig = readClientConfig()
+  if (clientConfig.cloudApiBase) {
+    process.env.CLOUD_API_BASE = String(clientConfig.cloudApiBase).replace(/\/$/, '')
+  }
   console.log('[desktop-shell] appRoot=', appRoot)
   console.log('[desktop-shell] UI index=', resolveUiIndex())
   console.log('[desktop-shell] cloudApiBase=', clientConfig.cloudApiBase || '(未配置 client.json)')
   console.log('[desktop-shell] native innerExe=', nativeRuntime.innerExe)
+
+  if (typeof nativeRuntime.setBrowserExitListener === 'function') {
+    nativeRuntime.setBrowserExitListener(notifyBrowserExited)
+  }
+
   createWindow()
 
   app.on('activate', () => {

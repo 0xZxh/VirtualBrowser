@@ -82,8 +82,12 @@ export default {
     cloudSyncPull: 'Pull from cloud',
     cloudSyncRefresh: 'Refresh',
     cloudSyncVersion: 'Local v{local} / Cloud v{cloud}',
+    cloudSyncHint:
+      'Syncs site data (cookies/storage), not fingerprint form; fingerprints stay with account envs in the cloud DB',
     cloudSyncRunningBlock: 'Close this environment before syncing',
-    cloudSyncSuccess: 'Sync completed',
+    cloudSyncSuccess: 'Sync completed (cookies/storage; fingerprint form not included)',
+    cloudSyncTimeout:
+      'Sync timed out — snapshot may be too large; retry or clear local Cache first',
     crxExtensions: 'Extensions',
     crxExtensionsPlaceholder: 'Select extensions to load (upload in Extensions first)',
     basic: 'Basic',

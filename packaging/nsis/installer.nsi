@@ -17,6 +17,7 @@
 !define INSTALL_DIR "$LOCALAPPDATA\Programs\VirtualBrowser"
 !define USER_DATA_DIR "$LOCALAPPDATA\VirtualBrowser"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VirtualBrowser"
+!define APP_ICON "..\assets\app.ico"
 
 Name "${PRODUCT_NAME}"
 OutFile "..\output\VirtualBrowser-Setup-${PRODUCT_VERSION}.exe"
@@ -25,6 +26,8 @@ RequestExecutionLevel user
 ShowInstDetails show
 
 !define MUI_ABORTWARNING
+!define MUI_ICON "${APP_ICON}"
+!define MUI_UNICON "${APP_ICON}"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Launch VirtualBrowser"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchApp
@@ -43,11 +46,12 @@ Section "MainSection" SEC01
   File /r "${STAGING_DIR}\*.*"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
-  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\VirtualBrowser.exe"
-  CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\VirtualBrowser.exe"
+  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\VirtualBrowser.exe" "" "$INSTDIR\assets\app.ico" 0
+  CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\VirtualBrowser.exe" "" "$INSTDIR\assets\app.ico" 0
 
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$INSTDIR\Uninstall.exe"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\VirtualBrowser.exe,0"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1

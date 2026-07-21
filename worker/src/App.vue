@@ -1,8 +1,8 @@
 <template>
   <section class="container">
     <header>
-      <img src="./assets/96.png" alt="Virtual Browser" />
-      <h1>Virtual Browser</h1>
+      <img src="./assets/logo.svg" alt="指纹浏览器" class="brand-logo" />
+      <h1>指纹浏览器</h1>
     </header>
     <main>
       <div v-if="previewMode" class="preview-banner">
@@ -100,7 +100,7 @@ type GeoState = {
   languages?: string
 }
 
-const DEFAULT_API = 'https://api.ipgeolocation.io/ipgeo?apiKey=free&fields=geo,time_zone,languages'
+const DEFAULT_API = 'http://localhost:3001/api/ip-geo'
 
 const geo = ref<GeoState>({
   ip: '',
@@ -129,10 +129,10 @@ const t = isZh
       fpHash: '指纹哈希',
       platform: '运行平台',
       uaHint: 'UA 摘要',
-      apiMissingTitle: 'API 链接未设置',
-      apiMissingBody: '请配置 IP 查询 API，或使用下方输入框。',
+      apiMissingTitle: 'IP 查询 API 未设置',
+      apiMissingBody: '默认使用自建 /api/ip-geo；也可在下方填写自定义 URL。',
       previewApiHint: '预览可填任意返回 geo JSON 的 API；保存后刷新页面。',
-      apiPlaceholder: 'https://…/ipgeo',
+      apiPlaceholder: 'https://…/api/ip-geo',
       saveApi: '保存并加载',
       netTitle: '未连接到互联网',
       netBody: '请检查网络或代理设置，或更换 API 链接',
@@ -148,10 +148,10 @@ const t = isZh
       fpHash: 'Fingerprint Hash',
       platform: 'Runtime Platform',
       uaHint: 'UA Summary',
-      apiMissingTitle: 'API link not set',
-      apiMissingBody: 'Configure an IP lookup API below.',
+      apiMissingTitle: 'IP lookup API not set',
+      apiMissingBody: 'Defaults to self-hosted /api/ip-geo; or enter a custom URL below.',
       previewApiHint: 'Use any geo JSON API for preview; save then reload.',
-      apiPlaceholder: 'https://…/ipgeo',
+      apiPlaceholder: 'https://…/api/ip-geo',
       saveApi: 'Save & load',
       netTitle: 'No internet connection',
       netBody: 'Check network/proxy or change the API link',
@@ -260,12 +260,15 @@ onMounted(async () => {
   const params = new URLSearchParams(location.search)
   const qLink = params.get('apiLink')
   const store = await getGlobalData()
-  const stored = qLink || store.apiLink || (previewMode ? DEFAULT_API : '')
+  // 优先 query / global.dat；缺省落到自建，不再默认第三方 ipgeolocation
+  const stored = (qLink || store.apiLink || DEFAULT_API).trim()
   if (stored) {
     apiLink.value = stored
     apiLinkInput.value = stored
     if (qLink) {
       await setGlobalData({ apiLink: qLink })
+    } else if (!store.apiLink) {
+      await setGlobalData({ apiLink: stored })
     }
     await loadGeo(stored)
   } else {
@@ -298,6 +301,18 @@ const getZone = (offset: number) => {
 
     & > * {
       margin: 10px 10px 15px;
+    }
+
+    .brand-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 14px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: #0f172a;
     }
   }
 

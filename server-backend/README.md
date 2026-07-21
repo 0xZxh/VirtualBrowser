@@ -22,7 +22,9 @@ npm run start:dev
 
 生产：`STORAGE_DRIVER=mongo` + `MONGODB_URI`，然后 `npm run build` → `npm start`。
 
-默认 `http://localhost:3001`。
+默认管理 API：`http://localhost:3001`；Compat 自动化 API：`http://localhost:9000`（`COMPAT_API_PORT`）。
+
+**生产/客户机房部署请按手册操作：** [`docs/CLOUD_DEPLOY.md`](../docs/CLOUD_DEPLOY.md)（Mongo + Nginx HTTPS + systemd + 验收命令）。
 
 ## 测试账号（seed）
 

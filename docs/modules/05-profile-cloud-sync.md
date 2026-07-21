@@ -10,7 +10,7 @@
 
 - 指纹环境 **运行时** Cookie、LocalStorage、IndexedDB、HTTP 缓存等的打包与解包
 - 本地快照 zip 与云端 `server-backend` 快照 API 的上传/下载
-- `launchBrowser` 生命周期：启动前 pull、退出后 pack + upload
+- `launchBrowser` 生命周期：~~启动前 pull~~、退出后 pack + upload（**启动默认不 auto-pull**，站点数据靠列表「云同步」）
 - 跨机恢复同一环境的网站登录态
 
 **不负责：**
@@ -20,6 +20,17 @@
 - 多租户快照隔离（见 [03.8](03-rbac-permissions.md#53)）
 
 **与表单 cookie 区分：** `browser/index.vue` 里 `form.cookie.jsonStr` 是指纹**注入用配置**，≠ Chromium 运行时 `Network/Cookies` 数据库。
+
+### 与指纹表单的关系（两套通道）
+
+| 通道 | 存什么 | 存哪里 | 怎么同步到另一台设备 |
+|------|--------|--------|----------------------|
+| **指纹表单**（UA/代理/WebGL/主页等） | 环境配置 JSON | 云端 Mongo（`/api/environments`）+ 本机 `virtual.dat` | **同一账号登录**即可看到相同表单；不经「云同步」按钮 |
+| **云同步按钮** | 站点 Cookies/Storage/IndexedDB 等 | 云端 `DATA_DIR/profiles/{tenant}/{envId}/snapshot.zip`（`cloudApiBase` 直连，无第三方中转）→ 本机 `Workers/{id}/` | 手动上传/拉取 |
+
+**启动不再自动 pull 云端快照**（避免大包卡死启动）。需要登录态一致时，先点列表「云同步」再启动。
+
+启动前会清理占用该 `Workers/{id}` 的残留内核进程与 Singleton 锁；CDP 未就绪会向 UI 返回失败（避免「日志显示已启动但无窗口」）。
 
 ---
 
@@ -35,13 +46,9 @@ sequenceDiagram
   participant Disk as Workers/envId
 
   UI->>Bridge: launchBrowser(envId)
-  Bridge->>CS: shouldPullFromCloud
-  CS->>BE: GET snapshot/meta
-  alt 云端更新
-    CS->>BE: GET snapshot zip
-    CS->>PS: unpackProfile
-  end
-  Bridge->>Disk: spawn 内核
+  Note over Bridge: 不再 await 云端 pull
+  Bridge->>Disk: refresh virtual.dat + spawn
+  Note over UI,BE: 站点快照请用云同步按钮手动 pull/upload
   Note over Bridge,Disk: 用户浏览产生 Cookie
   Bridge->>PS: exit 后 packProfile
   Bridge->>CS: uploadSnapshot

@@ -1,6 +1,6 @@
 # 多 Agent 协作协调表
 
-> **最后更新：** 2026-07-14（S8-phase2 API-09..19 done；延后：自建 IP 查询）  
+> **最后更新：** 2026-07-19；sync-timeout-cookie Setup 0.1.6（排除 Cache、同步 300s、CDP Cookie 注入）；repack-014 Setup 0.1.4 已出包。  
 > **用途：** Multitask 多 Agent 并行时的任务认领、文件所有权、阻塞登记。  
 > **Multitask 开工先读本文**，再读 [`ACCEPTANCE.md`](ACCEPTANCE.md) 总进度 + [`PROJECT_PROGRESS.md`](../PROJECT_PROGRESS.md)。
 
@@ -46,10 +46,15 @@
 | **S7-build** | 打通 NSIS+Electron 安装包阻塞 | Agent-S7-Build | 2026-07-14 | **done** | Setup=`packaging/output/VirtualBrowser-Setup-0.1.0.exe`；已补 staging `adm-zip`（2026-07-14）；CloudApiBase=`http://127.0.0.1:3001`；见 [`acceptance-reports/S7-build-2026-07-14.md`](acceptance-reports/S7-build-2026-07-14.md) |
 | **S6-prod** | S6 生产环境实机验收（Mongo + API） | Agent-S6-Prod | 2026-07-12 | **done** | 见 [`acceptance-reports/S6-prod-2026-07-12.md`](acceptance-reports/S6-prod-2026-07-12.md)；HTTP mongo 通过，HTTPS 待运维 |
 | **doc-sync-2** | 进度文档与 ACCEPTANCE 对齐 | Agent-Doc | 2026-07-14 | **done** | 见 [`acceptance-reports/doc-sync-2-2026-07-14.md`](acceptance-reports/doc-sync-2-2026-07-14.md) |
-| **E2E-2** | Setup 实机 + 生产路径联调 | — | — | **unclaimed** | 依赖 Setup.exe（已有）+ 可选生产 HTTPS |
+| **E2E-2** | Setup 实机 + 生产路径联调 | Agent-E2E-2 | 2026-07-18 | **done** | 部分通过；见 [`acceptance-reports/E2E-2-2026-07-18.md`](acceptance-reports/E2E-2-2026-07-18.md)；HTTPS / Compat 远程 launch 仍 blocked |
+| **taskbar-icons** | FP 品牌 app.ico + 壳/内核 rcedit + NSIS/BrowserWindow | Agent-Icons | 2026-07-19 | **done** | `packaging/assets/app.ico`；`build-client.ps1` rcedit 双 EXE；NSIS MUI_ICON；已随 repack-014 出包 |
+| **repack-014** | 重打 Setup 0.1.4（图标+设置修复入包） | Agent-Pack | 2026-07-19 | **done** | Setup=`packaging/output/VirtualBrowser-Setup-0.1.4.exe`（~464MB）；CloudApiBase=`http://120.78.76.171:3001`；staging=`packaging/staging-20260719160340`（主 staging 被锁）；rcedit 壳+内核 ok |
+| **sync-timeout-cookie** | 云同步排除 Cache；超时 300s；UI 说明范围；launch CDP Cookie 注入；Setup 0.1.6 | Agent-Sync | 2026-07-19 | **done** | `profile-sync` 去掉 Cache/Code Cache；`native.js`/`cloud-sync` 300s；`cdp-navigate.injectCookies`；Setup=`packaging/output/VirtualBrowser-Setup-0.1.6.exe` |
 | **bugfix-cdp** | 历史 env launch CDP 偶发超时 | — | — | **unclaimed** | 见 E2E-2026-07-12 |
+| **fix-settings-gaps** | cookie jsonStr/value、GetAPIProxy await、checkProxy 基础实现 | Agent-Settings | 2026-07-19 | **done** | cookie/GetAPIProxy/checkProxy；见 fingerprint 报告 |
+| **fingerprint-probe** | CDP 指纹门禁脚本 + acceptance 报告 | Agent-Settings | 2026-07-19 | **done** | [`acceptance-reports/fingerprint-settings-2026-07-19.md`](acceptance-reports/fingerprint-settings-2026-07-19.md) 门禁全绿 |
 | **S8-phase2** | Compat API-09+ | Agent-S8 | 2026-07-14 | **done** | API-09..19；见 [`COMPAT_API.md`](COMPAT_API.md) §第二期验收 |
-| **defer-ip-geo** | 自建 IP 查询（不调第三方） | — | — | **deferred** | 用户要求保留；见 `PROJECT_PROGRESS.md` §延后项；完成 S8-phase2 / 交付收尾时**主动提醒** |
+| **defer-ip-geo** | 自建 IP 查询（不调第三方） | Agent-IpGeo | 2026-07-19 | **done** | `GET /api/ip-geo` + MMDB + 管理端「自建」渠道；部署见 [`CLOUD_DEPLOY.md`](CLOUD_DEPLOY.md) §4.6 |
 | **cross-platform-prep** | 数据路径抽象 + 指纹 OS(Mac/Linux UA) + worker/automation 跨平台 | Agent-XP | 2026-07-15 | **done** | `config/vb-paths.js`；内核 exe 仍 Windows-only（Mission） |
 
 **认领规则：**
@@ -86,7 +91,7 @@
 批次 6 ✅ S8-phase2（API-09..19）
 下一拨：E2E-2（Setup 实机）∥ 可选 bugfix-cdp / Cookie 第三期
 再下一拨：生产 HTTPS + 重打 Setup（需用户提供域名）
-延后提醒：defer-ip-geo（自建 IP 查询）
+✅ defer-ip-geo（自建 IP 查询）已落地 — 见 CLOUD_DEPLOY §4.6
 ```
 
 ---
@@ -107,6 +112,8 @@
 | 日期 | 任务 | Agent | 原因 | 待用户确认 |
 |------|------|-------|------|------------|
 | 2026-07-11 | S5 chrome://extensions 目视 | Agent-Verify | 无法自动化操作 VirtualBrowser.exe 内核窗口 | 启动 envId=1，在指纹 Chrome 打开 `chrome://extensions` 确认扩展已加载 |
+| 2026-07-18 | E2E-2 HTTPS | Agent-E2E-2 | 生产仍明文 HTTP `:3001` | 上 Nginx HTTPS 后复验 |
+| 2026-07-18 | E2E-2 Compat 远程 | Agent-E2E-2 | addBrowser 500；launch 需同机内核 | 查服务器 Compat 日志；客户机本机 Compat 或接受仅管 API |
 
 ---
 

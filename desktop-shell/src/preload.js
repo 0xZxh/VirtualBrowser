@@ -19,28 +19,25 @@ function invokeNative(name, params) {
 }
 
 /**
- * 与 server/src/api/native.js 中 chrome.send 回调协议一致：
- * args = [callbackName, ...params]
+ * 桌面壳桥接（contextIsolation 下不可覆盖 window.chrome，也不可从 preload 写 page 的 window.cr）。
+ * 渲染进程应优先调用 vbDesktop.invoke(name, params) → Promise。
  */
-function chromeSend(name, args) {
-  const list = Array.isArray(args) ? args : []
-  const callbackName = list[0]
-  const params = list.slice(1)
-
-  invokeNative(name, params)
-    .then(data => {
-      if (typeof window.cr !== 'undefined' && typeof window.cr.webUIResponse === 'function') {
-        window.cr.webUIResponse(callbackName, 0, data)
-      }
-    })
-    .catch(err => {
-      console.error('[desktop-shell preload] native-call failed:', name, err)
-      if (typeof window.cr !== 'undefined' && typeof window.cr.webUIResponse === 'function') {
-        window.cr.webUIResponse(callbackName, 1, { error: String(err && err.message ? err.message : err) })
-      }
-    })
-}
-
-contextBridge.exposeInMainWorld('chrome', {
-  send: chromeSend
+contextBridge.exposeInMainWorld('vbDesktop', {
+  invoke: (name, params = []) => invokeNative(name, params),
+  /**
+   * @param {(payload: { envId: string }) => void} callback
+   * @returns {() => void} unsubscribe
+   */
+  onBrowserExited: callback => {
+    if (typeof callback !== 'function') {
+      return () => {}
+    }
+    const handler = (_event, payload) => {
+      callback(payload || {})
+    }
+    ipcRenderer.on('browser-exited', handler)
+    return () => {
+      ipcRenderer.removeListener('browser-exited', handler)
+    }
+  }
 })

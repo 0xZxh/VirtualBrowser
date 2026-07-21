@@ -1,10 +1,11 @@
 # 模块 08 — Compat REST API（Apifox 协议）
 
-> **状态：** 🟢 第一期 done（INFRA + API-01–08）；第二期 pending  
-> **验收阶段：** **S8** 🟡 基本通过（见 [`ACCEPTANCE.md`](../ACCEPTANCE.md) §S8）  
+> **状态：** 🟢 第一期+第二期 done（INFRA + API-01–19）；Cookie 第三期 pending  
+> **验收阶段：** **S8** 🟢 第一期+第二期通过（见 [`ACCEPTANCE.md`](../ACCEPTANCE.md) §S8）  
 > **任务真相：** [`COMPAT_API.md`](../COMPAT_API.md)（逐行 pending/done/blocked）  
 > **执行计划：** [`.cursor/plans/backend_native_api_整合_9545f4b9.plan.md`](../../.cursor/plans/backend_native_api_整合_9545f4b9.plan.md)  
-> **最后更新：** 2026-07-14
+> **最后更新：** 2026-07-18  
+> **报告：** [`acceptance-reports/S8-phase2-2026-07-14.md`](../acceptance-reports/S8-phase2-2026-07-14.md)
 
 ## 1. 目标与边界
 
@@ -34,7 +35,8 @@
 |------|------|---------|
 | INFRA-A/B/C | 11 | 0 |
 | 第一期 API-01–08 | 8 | 0 |
-| 第二期 API-09–19 | 0 | 11 |
+| 第二期 API-09–19 | 11 | 0 |
+| 第三期 Cookie | 0 | 2 |
 | blocked | — | 7 项明确不做 |
 
 ## 4. 关键文件（实现时创建）

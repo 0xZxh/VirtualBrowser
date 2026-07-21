@@ -8,6 +8,7 @@ import { StorageModule } from './storage/storage.module'
 import { AppController } from './app.controller'
 import { BrowserModule } from './browser/browser.module'
 import { ApiKeysModule } from './api-keys/api-keys.module'
+import { IpGeoModule } from './ip-geo/ip-geo.module'
 
 @Module({
   imports: [
@@ -18,7 +19,8 @@ import { ApiKeysModule } from './api-keys/api-keys.module'
     ProfilesModule,
     EnvironmentsModule,
     ApiKeysModule.forRoot(),
-    BrowserModule
+    BrowserModule,
+    IpGeoModule
   ],
   controllers: [AppController]
 })

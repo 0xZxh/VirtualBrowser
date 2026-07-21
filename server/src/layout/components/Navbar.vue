@@ -47,7 +47,6 @@ import Breadcrumb from '@/components/Breadcrumb'
 import Hamburger from '@/components/Hamburger'
 import ErrorLog from '@/components/ErrorLog'
 import Screenfull from '@/components/Screenfull'
-import SizeSelect from '@/components/SizeSelect'
 import LangSelect from '@/components/LangSelect'
 import Search from '@/components/HeaderSearch'
 
@@ -57,7 +56,6 @@ export default {
     Hamburger,
     ErrorLog,
     Screenfull,
-    SizeSelect,
     LangSelect,
     Search
   },
@@ -78,27 +76,30 @@ export default {
 
 <style lang="scss" scoped>
 .navbar {
-  height: 50px;
+  height: 52px;
   overflow: hidden;
   position: relative;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: none;
 
   .hamburger-container {
-    line-height: 46px;
+    line-height: 52px;
     height: 100%;
     float: left;
     cursor: pointer;
-    transition: background 0.3s;
+    transition: background 0.2s;
     -webkit-tap-highlight-color: transparent;
+    padding: 0 4px;
 
     &:hover {
-      background: rgba(0, 0, 0, 0.025);
+      background: #f1f5f9;
     }
   }
 
   .breadcrumb-container {
     float: left;
+    line-height: 52px;
   }
 
   .errLog-container {
@@ -109,42 +110,59 @@ export default {
   .right-menu {
     float: right;
     height: 100%;
-    line-height: 50px;
+    line-height: 52px;
+    display: flex;
+    align-items: center;
 
     &:focus {
       outline: none;
     }
 
     .right-menu-item {
-      display: inline-block;
-      padding: 0 8px;
-      height: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      height: 36px;
+      margin: 0 2px;
       font-size: 18px;
-      color: #5a5e66;
-      vertical-align: text-bottom;
+      color: #64748b;
+      border-radius: 6px;
+      vertical-align: middle;
 
       &.hover-effect {
         cursor: pointer;
-        transition: background 0.3s;
+        transition: background 0.2s, color 0.2s;
 
         &:hover {
-          background: rgba(0, 0, 0, 0.025);
+          background: #f1f5f9;
+          color: #0f172a;
         }
       }
     }
 
     .user-container {
-      margin-right: 16px;
+      margin-right: 12px;
+      margin-left: 4px;
 
       .user-menu-trigger {
         display: inline-flex;
         align-items: center;
         cursor: pointer;
         font-size: 14px;
-        color: #5a5e66;
+        color: #64748b;
+        height: 36px;
+        padding: 0 8px;
+        border-radius: 6px;
+        transition: background 0.2s, color 0.2s;
+
+        &:hover {
+          background: #f1f5f9;
+          color: #0f172a;
+        }
 
         .el-icon-user-solid {
-          font-size: 18px;
+          font-size: 16px;
           margin-right: 6px;
         }
 

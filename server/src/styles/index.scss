@@ -10,8 +10,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-family: Helvetica Neue, Helvetica, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Arial,
-    sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', 'Microsoft YaHei',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  color: #334155;
+  background: $pageBg;
 }
 
 label {
@@ -123,7 +126,10 @@ aside {
 
 //main-container全局样式
 .app-container {
-  padding: 20px;
+  padding: 16px 20px;
+  background: $contentBg;
+  border-radius: $contentRadius;
+  box-shadow: $contentShadow;
 }
 
 .components-container {
