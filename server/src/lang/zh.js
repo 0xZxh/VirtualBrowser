@@ -53,6 +53,7 @@ export default {
     name: '名称',
     browser: '浏览器',
     name_placeholder: '请输入浏览器名称',
+    search_placeholder: '名称 / ID',
     group: '选择分组',
     search: '搜索',
     import: {
@@ -65,6 +66,7 @@ export default {
     launch: '启动',
     launching: '启动中',
     launched: '已启动',
+    openDebug: '打开调试',
     edit: '编辑',
     delete: '删除',
     cloudSync: '云同步',

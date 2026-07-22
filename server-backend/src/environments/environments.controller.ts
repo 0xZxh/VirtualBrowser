@@ -35,6 +35,43 @@ export class EnvironmentsController {
     return { code: 0, data }
   }
 
+  @Post('batch')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'operator')
+  async createBatch(
+    @Req() req: { user: UserRecord },
+    @Body() body: { items?: BrowserEnvironmentItem[] }
+  ) {
+    const data = await this.environmentsService.createBatch(req.user, body?.items || [])
+    return { code: 0, data }
+  }
+
+  @Post('batch-group')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'operator')
+  async updateGroupBatch(
+    @Req() req: { user: UserRecord },
+    @Body() body: { ids?: Array<string | number>; group?: string }
+  ) {
+    const data = await this.environmentsService.updateGroupBatch(
+      req.user,
+      body?.ids || [],
+      body?.group || ''
+    )
+    return { code: 0, data }
+  }
+
+  @Delete('batch')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  async removeBatch(
+    @Req() req: { user: UserRecord },
+    @Body() body: { ids?: Array<string | number> }
+  ) {
+    const data = await this.environmentsService.removeBatch(req.user, body?.ids || [])
+    return { code: 0, data }
+  }
+
   @Put(':envId')
   @UseGuards(RolesGuard)
   @Roles('admin', 'operator')

@@ -10,8 +10,8 @@
         >
           {{ $t('browser.add') }}
         </el-button>
-        <el-dropdown v-permission="['admin', 'operator']">
-          <el-button type="primary">
+        <el-dropdown v-permission="['admin', 'operator']" :disabled="batchBusy">
+          <el-button type="primary" :loading="batchBusy">
             {{ $t('browser.batchActions') }}
             <i class="el-icon-arrow-down el-icon--right" />
           </el-button>
@@ -45,8 +45,10 @@
         <el-input
           v-model="listQuery.title"
           class="toolbar-input"
-          :placeholder="$t('browser.name')"
+          :placeholder="$t('browser.search_placeholder')"
+          clearable
           @keyup.enter.native="handleFilter"
+          @clear="handleFilter"
         />
         <el-button v-waves plain icon="el-icon-search" @click="handleFilter">
           {{ $t('browser.search') }}
@@ -72,8 +74,9 @@
 
     <el-table
       :key="tableKey"
-      v-loading="listLoading"
-      :data="list"
+      v-loading="listLoading || batchBusy"
+      :data="pagedList"
+      :height="tableHeight"
       fit
       highlight-current-row
       class="browser-table"
@@ -166,13 +169,18 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('browser.launch')" class-name="status-col" width="120">
+      <el-table-column
+        :label="$t('browser.launch')"
+        class-name="status-col"
+        width="220"
+        fixed="right"
+      >
         <template slot-scope="{ row }">
           <el-button
             type="primary"
             icon="el-icon-video-play"
             :loading="row.runLoading"
-            :disabled="row.isRunning"
+            :disabled="row.isRunning || isRowBusy(row)"
             @click="handleLaunch(row)"
           >
             {{
@@ -185,12 +193,24 @@
               )
             }}
           </el-button>
+          <el-button
+            v-if="row.isRunning"
+            plain
+            size="mini"
+            icon="el-icon-monitor"
+            :loading="row.debugLoading"
+            :disabled="isRowBusy(row)"
+            @click="handleOpenDebug(row)"
+          >
+            {{ $t('browser.openDebug') }}
+          </el-button>
         </template>
       </el-table-column>
       <el-table-column
         :label="$t('browser.actions')"
         align="center"
         width="160"
+        fixed="right"
         class-name="small-padding fixed-width"
       >
         <template slot-scope="{ row, $index }">
@@ -198,6 +218,7 @@
             v-permission="['admin', 'operator']"
             plain
             size="mini"
+            :disabled="isRowBusy(row)"
             @click="handleUpdate(row)"
           >
             {{ $t('browser.edit') }}
@@ -207,6 +228,8 @@
             v-permission="['admin']"
             type="text"
             class="action-delete"
+            :loading="row.deleteLoading"
+            :disabled="isRowBusy(row) && !row.deleteLoading"
             @click="handleDelete(row, $index)"
           >
             {{ $t('browser.delete') }}
@@ -214,6 +237,13 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <pagination
+      v-show="list && list.length > 0"
+      :total="list.length"
+      :page.sync="listQuery.page"
+      :limit.sync="listQuery.limit"
+    />
 
     <el-drawer
       :title="$t(dialogStatus == 'create' ? 'browser.add' : 'browser.edit')"
@@ -703,6 +733,7 @@
           <el-button
             type="primary"
             size="medium"
+            :loading="formSubmitLoading"
             @click="dialogStatus === 'create' ? onCreateData() : onUpdateData()"
           >
             {{ $t('browser.confirm') }}
@@ -734,12 +765,12 @@
       </span>
     </el-dialog>
     <el-dialog :visible.sync="dialogVisible" title="批量创建">
-      <el-form :model="form">
+      <el-form :model="batchForm">
         <el-form-item label="环境数量">
-          <el-input v-model.number="form.numberOfEnvironments" type="number" min="1" />
+          <el-input v-model.number="batchForm.numberOfEnvironments" type="number" min="1" />
         </el-form-item>
         <el-form-item label="代理类型">
-          <el-select v-model="form.proxyType" placeholder="请选择">
+          <el-select v-model="batchForm.proxyType" placeholder="请选择">
             <el-option label="默认" value="默认" />
             <el-option label="不使用代理" value="不使用代理" />
             <el-option label="HTTP" value="HTTP" />
@@ -748,12 +779,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="代理API链接">
-          <el-input v-model="form.proxyAPI" placeholder="请输入" />
+          <el-input v-model="batchForm.proxyAPI" placeholder="请输入" />
         </el-form-item>
       </el-form>
       <div slot="footer" class="dialog-footer">
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleBatchCreate">确认</el-button>
+        <el-button :disabled="batchBusy" @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchBusy" @click="handleBatchCreate">确认</el-button>
       </div>
     </el-dialog>
 
@@ -829,6 +860,9 @@ import {
   setGlobalData,
   getDefaultIpGeoApiLink,
   addBrowser,
+  batchAddBrowsers,
+  batchDeleteBrowsers,
+  batchSetBrowserGroup,
   updateBrowser,
   deleteBrowser,
   chromeSend,
@@ -856,7 +890,7 @@ import {
   loadScript,
   FINGERPRINT_PLATFORMS
 } from '@/utils'
-// import Pagination from '@/components/Pagination' // secondary package based on el-pagination
+import Pagination from '@/components/Pagination' // secondary package based on el-pagination
 import TimeZones from '@/utils/timezones.json'
 import Languages from '@/utils/languages.json'
 import SSL from '@/utils/ssl.json'
@@ -884,7 +918,7 @@ for (let i = Math.max(...coreVersions) + 1; i <= chromiumCoreVer; i++) {
 export default {
   name: 'ComplexTable',
   components: {
-    // Pagination
+    Pagination
   },
   directives: { waves },
   filters: {
@@ -899,63 +933,69 @@ export default {
   },
   data() {
     const validateCookie = (rule, value, callback) => {
-      if (this.form.cookie.mode === 0) {
-        this.form.cookie.value = ''
-        callback()
-        return
-      }
-
-      let json
       try {
-        // eslint-disable-next-line no-eval
-        json = eval(`(${value})`)
-      } catch {
-        callback(new Error(this.$t('browser.cookie.format_error')))
-        return
-      }
-
-      if (Object.prototype.toString.call(json) !== '[object Array]') {
-        callback(new Error(this.$t('browser.cookie.format_error')))
-        return
-      }
-
-      const setDefaultValue = (obj, key, value) => {
-        if (obj[key] === undefined) {
-          obj[key] = value
+        if (this.form.cookie.mode === 0) {
+          callback()
+          return
         }
-      }
 
-      json = json.map(item => {
-        const cookie = {}
-        Object.keys(item).forEach(key => {
-          let newKey = key.substring(0, 1).toLowerCase() + key.substring(1)
-          if (newKey === 'samesite') {
-            newKey = 'sameSite'
+        let json
+        try {
+          // eslint-disable-next-line no-eval
+          json = eval(`(${value})`)
+        } catch {
+          callback(new Error(this.$t('browser.cookie.format_error')))
+          return
+        }
+
+        if (Object.prototype.toString.call(json) !== '[object Array]') {
+          callback(new Error(this.$t('browser.cookie.format_error')))
+          return
+        }
+
+        const setDefaultValue = (obj, key, defaultVal) => {
+          if (obj[key] === undefined) {
+            obj[key] = defaultVal
           }
-          cookie[newKey] = item[key]
+        }
+
+        json = json.map(item => {
+          if (!item || typeof item !== 'object') {
+            throw new Error('invalid_cookie_item')
+          }
+          const cookie = {}
+          Object.keys(item).forEach(key => {
+            let newKey = key.substring(0, 1).toLowerCase() + key.substring(1)
+            if (newKey === 'samesite') {
+              newKey = 'sameSite'
+            }
+            cookie[newKey] = item[key]
+          })
+
+          setDefaultValue(cookie, 'sameSite', '')
+          setDefaultValue(cookie, 'session', false)
+          setDefaultValue(cookie, 'secure', false)
+          setDefaultValue(cookie, 'httpOnly', false)
+
+          return normalizeCookieEntry(cookie)
         })
 
-        setDefaultValue(cookie, 'sameSite', '')
-        setDefaultValue(cookie, 'session', false)
-        setDefaultValue(cookie, 'secure', false)
-        setDefaultValue(cookie, 'httpOnly', false)
+        const checkNameValue = json.every(item => {
+          return item.name && item.value && item.domain
+        })
 
-        return normalizeCookieEntry(cookie)
-      })
+        if (!checkNameValue) {
+          callback(new Error(this.$t('browser.cookie.format_error')))
+          return
+        }
 
-      const checkNameValue = json.every(item => {
-        return item.name && item.value && item.domain
-      })
-
-      if (!checkNameValue) {
+        this.form.cookie.value = json
+        // Rewrite jsonStr so the user sees sanitized domain / SameSite+Secure
+        this.form.cookie.jsonStr = JSON.stringify(json, null, 2)
+        callback()
+      } catch (e) {
         callback(new Error(this.$t('browser.cookie.format_error')))
-        return
       }
-
-      this.form.cookie.value = json
-      // Rewrite jsonStr so the user sees sanitized domain / SameSite+Secure
-      this.form.cookie.jsonStr = JSON.stringify(json, null, 2)
-      callback()
     }
     return {
       currentEditingRow: null,
@@ -971,24 +1011,29 @@ export default {
       tableKey: 0,
       list: null,
       listLoading: true,
+      batchBusy: false,
+      tableHeight: 480,
       listQuery: {
         page: 1,
-        limit: 5,
+        limit: 20,
         title: undefined,
         group: ''
       },
       dialogFormVisible: false,
+      formSubmitLoading: false,
       dialogVisible: false,
       dialogStatus: '',
       dialogCookieFormatVisible: false,
+      batchForm: {
+        numberOfEnvironments: 1,
+        proxyType: '默认',
+        proxyAPI: ''
+      },
       textMap: {
         update: this.$t('browser.edit'),
         create: this.$t('browser.add')
       },
       form: {
-        numberOfEnvironments: 1,
-        proxyType: '默认',
-        proxyAPI: '',
         proxy: {},
         cookie: {},
         homepage: {},
@@ -1103,6 +1148,13 @@ export default {
   computed: {
     language() {
       return this.$store.getters.language
+    },
+    pagedList() {
+      const list = this.list || []
+      const page = this.listQuery.page || 1
+      const limit = this.listQuery.limit || 20
+      const start = (page - 1) * limit
+      return list.slice(start, start + limit)
     }
   },
   watch: {
@@ -1186,6 +1238,7 @@ export default {
         } else if (!this._launchingIds.has(id)) {
           // 非启动请求中且已不在运行列表 → 清「启动中」（含进程退出）
           item.runLoading = false
+          item.debuggingPort = null
         }
         return item
       })
@@ -1261,12 +1314,23 @@ export default {
   },
   async mounted() {
     this.checkApiLinkSet()
+    this.updateTableHeight()
+    window.addEventListener('resize', this.updateTableHeight)
     this.GroupList = await getGroupList()
     this.GroupList.unshift({
       id: 0,
       name: this.$t('group.default')
     })
-    this._unsubBrowserExited = onBrowserExited(() => {
+    this._unsubBrowserExited = onBrowserExited(payload => {
+      const id = String((payload && payload.envId) || '')
+      if (id && this.list) {
+        const row = this.list.find(r => String(r.id) === id)
+        if (row) {
+          row.isRunning = false
+          row.runLoading = false
+          row.debuggingPort = null
+        }
+      }
       updateRuningState().catch(() => {})
     })
     this._runStateTimer = setInterval(() => {
@@ -1274,6 +1338,7 @@ export default {
     }, 3000)
   },
   beforeDestroy() {
+    window.removeEventListener('resize', this.updateTableHeight)
     if (this._runStateTimer) {
       clearInterval(this._runStateTimer)
       this._runStateTimer = null
@@ -1284,14 +1349,54 @@ export default {
     }
   },
   methods: {
+    updateTableHeight() {
+      // navbar ~52 + tags ~34 + toolbar ~56 + pagination ~56 + padding ~62
+      const h = window.innerHeight - 260
+      this.tableHeight = Math.max(280, h)
+    },
+    isRowBusy(row) {
+      if (!row) return false
+      return !!(row.deleteLoading || row.groupLoading || row.runLoading || this.batchBusy)
+    },
+    applyListFilters(fullList) {
+      let next = Array.isArray(fullList) ? fullList.slice() : []
+      const group = this.listQuery.group
+      if (group) {
+        next = next.filter(item => item.group === group)
+      }
+      const title = this.listQuery.title != null ? String(this.listQuery.title).trim() : ''
+      if (title) {
+        const q = title.toLowerCase()
+        next = next.filter(item => {
+          const itemName = String(item.name == null ? '' : item.name).toLowerCase()
+          const itemId = String(item.id == null ? '' : item.id)
+          const itemIdLower = itemId.toLowerCase()
+          return (
+            itemId === title || itemIdLower === q || itemName.includes(q) || itemIdLower.includes(q)
+          )
+        })
+      }
+      const limit = this.listQuery.limit || 20
+      const maxPage = Math.max(1, Math.ceil((next.length || 0) / limit) || 1)
+      if (this.listQuery.page > maxPage) {
+        this.listQuery.page = maxPage
+      }
+      return next
+    },
+    async refreshList() {
+      await this.getList()
+    },
     async getList() {
       this.listLoading = true
       try {
-        this.list = await getBrowserList()
+        const fullList = await getBrowserList()
         this.GlobalData = await getGlobalData()
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
+        // processUpdateData needs full working set; apply after mutate
+        this.list = fullList
         await this.processUpdateData()
+        this.list = this.applyListFilters(this.list)
         await updateRuningState()
         this.loadSyncStatuses()
       } catch (err) {
@@ -1578,11 +1683,12 @@ export default {
     onCreateData() {
       this.$refs['dataForm'].validate(async (valid, result) => {
         if (valid) {
-          this.form.timestamp = Date.now()
-          this.preProcessData(this.form)
+          this.formSubmitLoading = true
           try {
+            this.form.timestamp = Date.now()
+            this.preProcessData(this.form)
             await addBrowser(this.form, this.$t('browser.browser'))
-            this.getList()
+            await this.getList()
             this.dialogFormVisible = false
             this.$notify({
               title: this.$t('browser.success'),
@@ -1592,18 +1698,17 @@ export default {
             })
           } catch (err) {
             console.error('[createBrowser]', err)
+            chromeSend('appendUiLog', {
+              level: 'ERROR',
+              message: 'createBrowser failed',
+              meta: { error: err && err.message ? err.message : String(err) }
+            }).catch(() => {})
             this.$message.error('创建失败: ' + (err && err.message ? err.message : String(err)))
+          } finally {
+            this.formSubmitLoading = false
           }
         } else {
-          const arr = Object.values(result)
-            .map(item => this.$t('browser.' + item[0].field) + item[0].message)
-            .slice(0, 1)
-
-          this.$message({
-            type: 'error',
-            dangerouslyUseHTMLString: true,
-            message: '<p>' + arr.join('</p><p>') + '</p>'
-          })
+          this.showValidationError(result)
         }
       })
     },
@@ -1691,17 +1796,18 @@ export default {
       return changed
     },
     preProcessData(data) {
-      const { proxy } = data
-      if (proxy.mode === 2) {
-        let url = proxy.protocol.toLowerCase() + '://'
+      if (!data || typeof data !== 'object') return
+      const proxy = data.proxy
+      if (proxy && Number(proxy.mode) === 2) {
+        const protocol = String(proxy.protocol || 'HTTP').toLowerCase()
+        let url = protocol + '://'
         if (proxy.user) {
-          url += proxy.user + ':' + proxy.pass + '@'
+          url += proxy.user + ':' + (proxy.pass || '') + '@'
         }
-        url += proxy.host
+        url += proxy.host || ''
         if (proxy.port) {
           url += ':' + proxy.port
         }
-
         proxy.url = url
       }
 
@@ -1733,15 +1839,100 @@ export default {
           } else if (Array.isArray(data.cookie.value)) {
             data.cookie.value = normalizeCookieList(data.cookie.value)
           }
-        } else {
-          data.cookie.value = ''
-          data.cookie.jsonStr = ''
+        }
+        // mode!==1：不清空已有 Cookie，避免编辑再存抹掉导入数据；运行时仍仅 mode=1 注入
+      }
+
+      if (!data['sec-ch-ua'] || typeof data['sec-ch-ua'] !== 'object') {
+        data['sec-ch-ua'] = { mode: 0, value: [] }
+      }
+      if (!Array.isArray(data['sec-ch-ua'].value)) {
+        data['sec-ch-ua'].value = []
+      }
+      data['sec-ch-ua'].value = data['sec-ch-ua'].value.filter(item => {
+        return item && item.brand && item.version
+      })
+    },
+    showValidationError(result) {
+      try {
+        const first = Object.values(result || {})[0]
+        const msg =
+          first && first[0]
+            ? (this.$t('browser.' + first[0].field) || '') + (first[0].message || '')
+            : this.$t('browser.required')
+        this.$message.error(msg || '表单校验失败')
+      } catch (e) {
+        this.$message.error(this.$t('browser.required') || '表单校验失败')
+      }
+    },
+    parseCookieArray(raw) {
+      if (Array.isArray(raw)) return raw
+      if (raw == null || raw === '') return null
+      if (typeof raw === 'string') {
+        const text = raw.trim()
+        if (!text) return null
+        try {
+          const parsed = JSON.parse(text)
+          return Array.isArray(parsed) ? parsed : null
+        } catch {
+          try {
+            // eslint-disable-next-line no-eval
+            const parsed = eval(`(${text})`)
+            return Array.isArray(parsed) ? parsed : null
+          } catch {
+            return null
+          }
+        }
+      }
+      return null
+    },
+    normalizeImportItem(raw) {
+      const defaults = this.getDefaultForm()
+      const src = raw && typeof raw === 'object' ? raw : {}
+      const item = { ...defaults, ...src }
+
+      for (const key of Object.keys(defaults)) {
+        const defVal = defaults[key]
+        const srcVal = src[key]
+        if (
+          defVal &&
+          typeof defVal === 'object' &&
+          !Array.isArray(defVal) &&
+          srcVal &&
+          typeof srcVal === 'object' &&
+          !Array.isArray(srcVal)
+        ) {
+          item[key] = { ...defVal, ...srcVal }
         }
       }
 
-      data['sec-ch-ua'].value = data['sec-ch-ua'].value.filter(item => {
-        return item.brand && item.version
-      })
+      if (!item.cookie || typeof item.cookie !== 'object') {
+        item.cookie = { mode: 0, value: '', jsonStr: '' }
+      }
+
+      let cookies = null
+      if (Array.isArray(src.cookieData) && src.cookieData.length) {
+        cookies = src.cookieData
+      } else if (Array.isArray(item.cookie.value) && item.cookie.value.length) {
+        cookies = item.cookie.value
+      } else {
+        cookies =
+          this.parseCookieArray(item.cookie.jsonStr) || this.parseCookieArray(item.cookie.value)
+      }
+
+      if (cookies && cookies.length) {
+        item.cookie.mode = 1
+        item.cookie.value = normalizeCookieList(cookies)
+        item.cookie.jsonStr = JSON.stringify(item.cookie.value, null, 2)
+      }
+
+      // 产品无消费方，避免污染展示
+      if ('launchArgs' in item) {
+        delete item.launchArgs
+      }
+
+      this.preProcessData(item)
+      return item
     },
     handleUpdate(row) {
       this.resetForm()
@@ -1773,13 +1964,14 @@ export default {
     onUpdateData() {
       this.$refs['dataForm'].validate(async (valid, result) => {
         if (valid) {
-          const tempData = Object.assign({}, this.form)
-          console.log('submit', tempData)
-          tempData.timestamp = +new Date(tempData.timestamp) // change Thu Nov 30 2017 16:41:05 GMT+0800 (CST) to 1512031311464
-          this.preProcessData(tempData)
+          this.formSubmitLoading = true
           try {
+            const tempData = Object.assign({}, this.form)
+            console.log('submit', tempData)
+            tempData.timestamp = +new Date(tempData.timestamp)
+            this.preProcessData(tempData)
             await updateBrowser(tempData)
-            this.getList()
+            await this.getList()
             this.dialogFormVisible = false
             this.$notify({
               title: this.$t('browser.success'),
@@ -1789,36 +1981,44 @@ export default {
             })
           } catch (err) {
             console.error('[updateBrowser]', err)
+            chromeSend('appendUiLog', {
+              level: 'ERROR',
+              message: 'updateBrowser failed',
+              meta: { error: err && err.message ? err.message : String(err) }
+            }).catch(() => {})
             this.$message.error('更新失败: ' + (err && err.message ? err.message : String(err)))
+          } finally {
+            this.formSubmitLoading = false
           }
         } else {
-          const arr = Object.values(result)
-            .map(item => this.$t('browser.' + item[0].field) + item[0].message)
-            .slice(0, 1)
-
-          this.$message({
-            type: 'error',
-            dangerouslyUseHTMLString: true,
-            message: '<p>' + arr.join('</p><p>') + '</p>'
-          })
+          this.showValidationError(result)
         }
       })
     },
     handleDelete(row, index) {
       this.$confirm(this.$t('browser.delete_confirm').replace('${name}', row.name))
         .then(async () => {
-          await deleteBrowser(row.id)
-          this.getList()
-          this.$notify({
-            title: this.$t('browser.success'),
-            message: this.$t('browser.delete') + this.$t('browser.success'),
-            type: 'success',
-            duration: 2000
-          })
+          this.$set(row, 'deleteLoading', true)
+          try {
+            await deleteBrowser(row.id)
+            await this.refreshList()
+            this.$notify({
+              title: this.$t('browser.success'),
+              message: this.$t('browser.delete') + this.$t('browser.success'),
+              type: 'success',
+              duration: 2000
+            })
+          } catch (err) {
+            console.error('[deleteBrowser]', err)
+            this.$message.error('删除失败: ' + (err && err.message ? err.message : String(err)))
+          } finally {
+            this.$set(row, 'deleteLoading', false)
+          }
         })
         .catch(() => {})
     },
     async handleLaunch(row) {
+      if (this.isRowBusy(row) && !row.runLoading) return
       if (row.proxy && row.proxy.API) {
         const ok = await this.GetAPIProxy(row)
         if (!ok) {
@@ -1828,12 +2028,15 @@ export default {
       }
       const id = String(row.id)
       this._launchingIds.add(id)
-      row.runLoading = true
+      this.$set(row, 'runLoading', true)
       // spawn 很快；站点云拉取已从启动路径移除，60s 足够
       try {
-        await chromeSendTimeout('launchBrowser', 60000, id)
-        row.runLoading = false
-        row.isRunning = true
+        const ret = await chromeSendTimeout('launchBrowser', 60000, id)
+        this.$set(row, 'runLoading', false)
+        this.$set(row, 'isRunning', true)
+        if (ret && ret.debuggingPort) {
+          this.$set(row, 'debuggingPort', ret.debuggingPort)
+        }
         this._launchingIds.delete(id)
         await updateRuningState()
       } catch (err) {
@@ -1844,9 +2047,44 @@ export default {
             ? '启动超时。若刚点过云同步请稍候再试；站点数据请用「云同步」拉取，勿依赖启动自动下载。'
             : raw
         this.$message.error('启动失败: ' + tip)
-        row.runLoading = false
-        row.isRunning = false
+        chromeSend('appendUiLog', {
+          level: 'ERROR',
+          message: 'launchBrowser failed',
+          meta: { envId: id, error: tip }
+        }).catch(() => {})
+        this.$set(row, 'runLoading', false)
+        this.$set(row, 'isRunning', false)
+        this.$set(row, 'debuggingPort', null)
         this._launchingIds.delete(id)
+      }
+    },
+    async handleOpenDebug(row) {
+      const id = String(row.id)
+      this.$set(row, 'debugLoading', true)
+      try {
+        let info = await chromeSendTimeout('getEnvDebugInfo', 8000, id).catch(() => null)
+        if (!info || !info.url) {
+          const port =
+            (info && info.port) ||
+            row.debuggingPort ||
+            (await chromeSend('getEnvDebugPort', id).catch(() => null))
+          if (!port) {
+            throw new Error('环境未运行或无调试端口')
+          }
+          info = { port, url: `http://127.0.0.1:${port}/json/list` }
+        }
+        this.$set(row, 'debuggingPort', info.port)
+        if (window.vbDesktop && typeof window.vbDesktop.openExternal === 'function') {
+          await window.vbDesktop.openExternal(info.url)
+        } else {
+          window.open(info.url, '_blank')
+        }
+        this.$message.success('已打开调试端口 ' + info.port)
+      } catch (err) {
+        console.error('[openDebug]', err)
+        this.$message.error('打开调试失败: ' + (err && err.message ? err.message : String(err)))
+      } finally {
+        this.$set(row, 'debugLoading', false)
       }
     },
     onReRandomComputerName() {
@@ -1878,11 +2116,15 @@ export default {
         let json
         try {
           json = JSON.parse(jsonStr)
+          if (!Array.isArray(json)) {
+            throw new Error('导入文件必须是环境数组 JSON')
+          }
           for (let i = 0; i < json.length; i++) {
-            await addBrowser(json[i])
+            const item = this.normalizeImportItem(json[i])
+            await addBrowser(item)
           }
 
-          this.getList()
+          await this.getList()
           this.$notify({
             title: this.$t('browser.success'),
             message: `导入${json.length}条数据`,
@@ -1890,6 +2132,12 @@ export default {
             duration: 3000
           })
         } catch (ex) {
+          console.error('[onImport]', ex)
+          chromeSend('appendUiLog', {
+            level: 'ERROR',
+            message: 'onImport failed',
+            meta: { error: ex && ex.message ? ex.message : String(ex) }
+          }).catch(() => {})
           this.$notify({
             title: '导入失败',
             message: `${ex.message}`,
@@ -2018,7 +2266,6 @@ export default {
         const data = await this.fetchAndParseAPI(row.proxy.API)
         this.updateProxyData(row.proxy, data)
         await this.onUpdateRowData(row)
-        this.getList()
         return true
       } catch (error) {
         console.error('请求代理 API 失败:', error)
@@ -2037,7 +2284,7 @@ export default {
       row.timestamp = +new Date()
       this.preProcessData(row)
       await updateBrowser(row)
-      this.getList()
+      await this.refreshList()
       this.dialogFormVisible = false
       this.$notify({
         title: this.$t('browser.success'),
@@ -2055,49 +2302,54 @@ export default {
       })
     },
     async handleBatchCreate() {
-      if (!this.form.numberOfEnvironments || this.form.numberOfEnvironments < 1) {
+      const count = Number(this.batchForm.numberOfEnvironments)
+      if (!count || count < 1) {
         this.$message.error('无效的环境数量')
         return
       }
-      for (let i = 0; i < this.form.numberOfEnvironments; i++) {
-        const newEnvironmentData = this.getDefaultForm()
-        newEnvironmentData.timestamp = Date.now()
-        const uaData = this.updateChromeVer(newEnvironmentData.chrome_version)
-        newEnvironmentData.ua.value = uaData.ua
-        newEnvironmentData['ua-full-version'].value = uaData.uaFullVersion
+      this.batchBusy = true
+      try {
+        const items = []
+        for (let i = 0; i < count; i++) {
+          const newEnvironmentData = this.getDefaultForm()
+          newEnvironmentData.timestamp = Date.now()
+          const uaData = this.updateChromeVer(newEnvironmentData.chrome_version)
+          newEnvironmentData.ua.value = uaData.ua
+          newEnvironmentData['ua-full-version'].value = uaData.uaFullVersion
 
-        if (this.form.proxyAPI) {
-          newEnvironmentData.proxy.API = this.form.proxyAPI
-          newEnvironmentData.proxy.protocol = this.form.proxyType
-          newEnvironmentData.proxy.mode = 2
+          if (this.batchForm.proxyAPI) {
+            newEnvironmentData.proxy.API = this.batchForm.proxyAPI
+            newEnvironmentData.proxy.protocol = this.batchForm.proxyType
+            newEnvironmentData.proxy.mode = 2
+          }
+          if (this.batchForm.proxyType === '默认') {
+            newEnvironmentData.proxy.mode = 0
+          }
+          if (this.batchForm.proxyType === '不使用代理') {
+            newEnvironmentData.proxy.mode = 1
+          }
+          this.preProcessData(newEnvironmentData)
+          items.push(newEnvironmentData)
         }
-        if (this.form.proxyType === '默认') {
-          newEnvironmentData.proxy.mode = 0
-        }
-        if (this.form.proxyType === '不使用代理') {
-          newEnvironmentData.proxy.mode = 1
-        }
-        this.preProcessData(newEnvironmentData)
-        try {
-          await addBrowser(newEnvironmentData)
-          this.$notify({
-            title: this.$t('browser.success'),
-            message: this.$t('browser.create') + this.$t('browser.success'),
-            type: 'success',
-            duration: 2000
-          })
-        } catch (error) {
-          this.$message.error('创建环境失败: ' + error.message)
-          break
-        }
+        await batchAddBrowsers(items, this.$t('browser.browser'))
+        this.batchForm.numberOfEnvironments = 1
+        this.batchForm.proxyType = '默认'
+        this.batchForm.proxyAPI = ''
+        await this.refreshList()
+        this.dialogVisible = false
+        this.$notify({
+          title: this.$t('browser.success'),
+          message: `批量创建 ${items.length} 条` + this.$t('browser.success'),
+          type: 'success',
+          duration: 2000
+        })
+      } catch (error) {
+        this.$message.error(
+          '批量创建失败: ' + (error && error.message ? error.message : String(error))
+        )
+      } finally {
+        this.batchBusy = false
       }
-
-      this.form.numberOfEnvironments = 1
-      this.form.proxyType = '默认'
-      this.form.proxyAPI = ''
-
-      this.getList()
-      this.dialogVisible = false
     },
     updateChromeVer(val) {
       if (val === '默认') {
@@ -2130,23 +2382,37 @@ export default {
         )
       )
         .then(async () => {
+          this.batchBusy = true
+          const rows = this.selectedRows.slice()
+          rows.forEach(row => this.$set(row, 'deleteLoading', true))
           try {
-            for (const row of this.selectedRows) {
-              await deleteBrowser(row.id)
+            const result = await batchDeleteBrowsers(rows.map(row => row.id))
+            await this.refreshList()
+            const deleted = (result && result.deleted && result.deleted.length) || 0
+            const failed = (result && result.failed && result.failed.length) || 0
+            if (failed > 0) {
+              this.$notify({
+                title: '部分失败',
+                message: `删除成功 ${deleted} 条，失败 ${failed} 条`,
+                type: 'warning',
+                duration: 3000
+              })
+            } else {
+              this.$notify({
+                title: this.$t('browser.success'),
+                message: `${deleted} ` + this.$t('browser.delete') + this.$t('browser.success'),
+                type: 'success',
+                duration: 2000
+              })
             }
-
-            this.getList()
-            this.$notify({
-              title: this.$t('browser.success'),
-              message:
-                `${this.selectedRows.length} ` +
-                this.$t('browser.delete') +
-                this.$t('browser.success'),
-              type: 'success',
-              duration: 2000
-            })
           } catch (error) {
             console.error('Error during batch delete:', error)
+            this.$message.error(
+              '批量删除失败: ' + (error && error.message ? error.message : String(error))
+            )
+          } finally {
+            rows.forEach(row => this.$set(row, 'deleteLoading', false))
+            this.batchBusy = false
           }
         })
         .catch(() => {})
@@ -2234,21 +2500,8 @@ export default {
     },
     async searchList() {
       try {
-        let fullList = await getBrowserList()
-        fullList = fullList.filter(item => {
-          return this.listQuery.group === '' || item.group === this.listQuery.group
-        })
-
-        if (this.listQuery.title) {
-          const searchQueryLower = this.listQuery.title.toLowerCase()
-          this.list = fullList.filter(item => {
-            const itemName = String(item.name)
-            const itemId = String(item.id)
-            return itemName.includes(searchQueryLower) || itemId.includes(searchQueryLower)
-          })
-        } else {
-          this.list = fullList
-        }
+        const fullList = await getBrowserList()
+        this.list = this.applyListFilters(fullList)
       } catch (error) {
         console.error('Search failed:', error)
       }
@@ -2278,25 +2531,39 @@ export default {
         return
       }
 
-      if (this.currentEditingRow) {
-        this.currentEditingRow.group = this.selectedGroup
-        await updateBrowser(this.currentEditingRow)
-      } else {
-        for (let i = 0; i < this.selectedRows.length; i++) {
-          const row = this.selectedRows[i]
-          row.group = this.selectedGroup
-          await updateBrowser(row)
+      this.batchBusy = true
+      try {
+        if (this.currentEditingRow) {
+          this.$set(this.currentEditingRow, 'groupLoading', true)
+          this.currentEditingRow.group = this.selectedGroup
+          await updateBrowser(this.currentEditingRow)
+          this.$set(this.currentEditingRow, 'groupLoading', false)
+        } else {
+          const rows = this.selectedRows.slice()
+          rows.forEach(row => this.$set(row, 'groupLoading', true))
+          try {
+            await batchSetBrowserGroup(
+              rows.map(row => row.id),
+              this.selectedGroup
+            )
+          } finally {
+            rows.forEach(row => this.$set(row, 'groupLoading', false))
+          }
         }
-      }
 
-      this.$notify({
-        title: '操作成功',
-        message: '分组更新成功',
-        type: 'success',
-        duration: 2000
-      })
-      this.dialogBatchSetGroupVisible = false
-      this.getList()
+        this.$notify({
+          title: '操作成功',
+          message: '分组更新成功',
+          type: 'success',
+          duration: 2000
+        })
+        this.dialogBatchSetGroupVisible = false
+        await this.refreshList()
+      } catch (err) {
+        this.$message.error('分组更新失败: ' + (err && err.message ? err.message : String(err)))
+      } finally {
+        this.batchBusy = false
+      }
     },
     async handleEditGroup(row) {
       this.selectedGroup = row.group || this.$t('group.default')
@@ -2309,6 +2576,17 @@ export default {
 
 <style lang="scss" scoped>
 @import '@/styles/element-variables.scss';
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 100px);
+}
+
+.browser-table {
+  width: 100%;
+  flex: 1 1 auto;
+}
 
 .toolbar {
   display: flex;

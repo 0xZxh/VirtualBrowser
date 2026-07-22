@@ -37,3 +37,30 @@ export function importEnvironments(items) {
     data: { items }
   })
 }
+
+export function batchCreateEnvironments(items) {
+  return request({
+    url: '/api/environments/batch',
+    method: 'post',
+    data: { items },
+    timeout: 120000
+  })
+}
+
+export function batchDeleteEnvironments(ids) {
+  return request({
+    url: '/api/environments/batch',
+    method: 'delete',
+    data: { ids },
+    timeout: 120000
+  })
+}
+
+export function batchUpdateEnvironmentGroup(ids, group) {
+  return request({
+    url: '/api/environments/batch-group',
+    method: 'post',
+    data: { ids, group },
+    timeout: 120000
+  })
+}

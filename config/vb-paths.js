@@ -69,6 +69,10 @@ function getWorkerDir(envId) {
   return path.join(getWorkersRoot(), String(envId))
 }
 
+function getLogsDir() {
+  return path.join(getVbRoot(), 'logs')
+}
+
 module.exports = {
   APP_DIR_NAME,
   getHostPlatform,
@@ -79,5 +83,6 @@ module.exports = {
   getSnapshotsRoot,
   getBrowserListFile,
   getGlobalDatFile,
-  getWorkerDir
+  getWorkerDir,
+  getLogsDir
 }

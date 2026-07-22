@@ -1,8 +1,14 @@
 const fs = require('fs')
 const path = require('path')
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, shell } = require('electron')
 const { handleNativeIpc, nativeRuntime } = require('./native-ipc')
 const { appRoot } = require('./paths')
+const { getLogsDir } = require(path.join(appRoot, 'config/vb-paths'))
+const {
+  logDesktop,
+  errorDesktop,
+  ensureLogsDir
+} = require(path.join(appRoot, 'server/lib/file-logger'))
 
 function readClientConfig() {
   const candidates = [
@@ -17,6 +23,7 @@ function readClientConfig() {
         return JSON.parse(raw)
       } catch (err) {
         console.warn('[desktop-shell] invalid client.json:', file, err.message)
+        errorDesktop('invalid client.json', { file, error: err.message })
       }
     }
   }
@@ -80,6 +87,7 @@ function createWindow() {
 
   mainWindow.loadFile(indexHtml).catch(err => {
     console.error('[desktop-shell] loadFile failed:', indexHtml, err.message)
+    errorDesktop('loadFile failed', { indexHtml, error: err.message })
   })
 
   if (clientConfig.windowTitle) {
@@ -95,6 +103,31 @@ ipcMain.handle('native-call', async (_event, payload) => {
   return handleNativeIpc(payload)
 })
 
+ipcMain.handle('desktop-open-external', async (_event, url) => {
+  if (!url || typeof url !== 'string') {
+    throw new Error('openExternal: invalid url')
+  }
+  await shell.openExternal(url)
+  return { ok: true }
+})
+
+ipcMain.handle('desktop-open-log-folder', async () => {
+  const dir = ensureLogsDir()
+  const err = await shell.openPath(dir)
+  if (err) {
+    throw new Error(err)
+  }
+  return { ok: true, path: dir }
+})
+
+ipcMain.handle('desktop-open-devtools', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('主窗口不可用')
+  }
+  mainWindow.webContents.openDevTools({ mode: 'detach' })
+  return { ok: true }
+})
+
 function notifyBrowserExited(envId) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('browser-exited', { envId: String(envId) })
@@ -106,10 +139,22 @@ app.whenReady().then(() => {
   if (clientConfig.cloudApiBase) {
     process.env.CLOUD_API_BASE = String(clientConfig.cloudApiBase).replace(/\/$/, '')
   }
+  try {
+    ensureLogsDir()
+  } catch (err) {
+    console.warn('[desktop-shell] ensureLogsDir failed:', err.message)
+  }
   console.log('[desktop-shell] appRoot=', appRoot)
   console.log('[desktop-shell] UI index=', resolveUiIndex())
   console.log('[desktop-shell] cloudApiBase=', clientConfig.cloudApiBase || '(未配置 client.json)')
   console.log('[desktop-shell] native innerExe=', nativeRuntime.innerExe)
+  console.log('[desktop-shell] logsDir=', getLogsDir())
+  logDesktop('app ready', {
+    appRoot,
+    uiIndex: resolveUiIndex(),
+    cloudApiBase: clientConfig.cloudApiBase || null,
+    logsDir: getLogsDir()
+  })
 
   if (typeof nativeRuntime.setBrowserExitListener === 'function') {
     nativeRuntime.setBrowserExitListener(notifyBrowserExited)

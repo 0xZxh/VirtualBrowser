@@ -24,6 +24,9 @@ function invokeNative(name, params) {
  */
 contextBridge.exposeInMainWorld('vbDesktop', {
   invoke: (name, params = []) => invokeNative(name, params),
+  openExternal: url => ipcRenderer.invoke('desktop-open-external', url),
+  openLogFolder: () => ipcRenderer.invoke('desktop-open-log-folder'),
+  openDevTools: () => ipcRenderer.invoke('desktop-open-devtools'),
   /**
    * @param {(payload: { envId: string }) => void} callback
    * @returns {() => void} unsubscribe

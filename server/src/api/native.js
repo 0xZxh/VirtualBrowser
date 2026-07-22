@@ -1,6 +1,9 @@
 import { v4 as uuid_v4 } from 'uuid'
 import { getToken } from '@/utils/auth'
 import {
+  batchCreateEnvironments,
+  batchDeleteEnvironments,
+  batchUpdateEnvironmentGroup,
   createEnvironment,
   deleteEnvironment,
   fetchEnvironments,
@@ -335,6 +338,124 @@ export async function deleteBrowser(id) {
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
   await chromeSendTimeout('setBrowserList', 30000, data)
+}
+
+export async function batchAddBrowsers(items, defaultName) {
+  const listItems = Array.isArray(items) ? items : []
+  if (!listItems.length) {
+    return { created: [] }
+  }
+
+  if (getToken()) {
+    const prefix = defaultName ? defaultName + ' ' : ''
+    const payload = listItems.map(item => {
+      const next = { ...item }
+      if (!next.name) {
+        next.name = prefix + (next.id || 'new')
+      }
+      return next
+    })
+    const res = await batchCreateEnvironments(payload)
+    const created = (res && res.data && res.data.created) || []
+    for (let i = 0; i < created.length; i++) {
+      const env = created[i]
+      const src = listItems[i] || {}
+      await syncEnvCrxBindings(String(env.id), src.crxIds || []).catch(console.warn)
+    }
+    const list = await fetchListFromBackend()
+    await syncListToBridge(list)
+    return { created }
+  }
+
+  const list = await getBrowserList()
+  let maxId = Math.max(0, ...list.map(item => Number(item.id) || 0))
+  const prefix = defaultName ? defaultName + ' ' : ''
+  const created = []
+  for (const item of listItems) {
+    maxId += 1
+    const next = { ...item, id: maxId }
+    next.name = next.name || prefix + next.id
+    list.push(next)
+    created.push(next)
+    await syncEnvCrxBindings(String(next.id), next.crxIds || []).catch(console.warn)
+  }
+  const data = { users: list }
+  localStorage.setItem('list', JSON.stringify(data))
+  await chromeSendTimeout('setBrowserList', 30000, data)
+  return { created }
+}
+
+export async function batchDeleteBrowsers(ids) {
+  const idList = (Array.isArray(ids) ? ids : []).map(id => String(id))
+  if (!idList.length) {
+    return { deleted: [], failed: [] }
+  }
+
+  if (getToken()) {
+    const res = await batchDeleteEnvironments(idList)
+    const result = (res && res.data) || { deleted: [], failed: [] }
+    for (const id of result.deleted || []) {
+      await chromeSend('deleteBrowser', id).catch(() => {})
+    }
+    const list = await fetchListFromBackend()
+    await syncListToBridge(list)
+    return result
+  }
+
+  const deleted = []
+  const failed = []
+  let list = await getBrowserList()
+  for (const id of idList) {
+    try {
+      await chromeSend('deleteBrowser', id).catch(() => {})
+      const idx = list.findIndex(it => String(it.id) === id)
+      if (idx >= 0) {
+        list.splice(idx, 1)
+        deleted.push(id)
+      } else {
+        failed.push({ id, message: '环境不存在' })
+      }
+    } catch (err) {
+      failed.push({ id, message: err && err.message ? err.message : String(err) })
+    }
+  }
+  const data = { users: list }
+  localStorage.setItem('list', JSON.stringify(data))
+  await chromeSendTimeout('setBrowserList', 30000, data)
+  return { deleted, failed }
+}
+
+export async function batchSetBrowserGroup(ids, group) {
+  const idList = (Array.isArray(ids) ? ids : []).map(id => String(id))
+  const nextGroup = String(group || '').trim() || '默认分组'
+  if (!idList.length) {
+    return { updated: [], failed: [] }
+  }
+
+  if (getToken()) {
+    const res = await batchUpdateEnvironmentGroup(idList, nextGroup)
+    const result = (res && res.data) || { updated: [], failed: [] }
+    const list = await fetchListFromBackend()
+    await syncListToBridge(list)
+    return result
+  }
+
+  const updated = []
+  const failed = []
+  const list = await getBrowserList()
+  for (const id of idList) {
+    const idx = list.findIndex(it => String(it.id) === id)
+    if (idx < 0) {
+      failed.push({ id, message: '环境不存在' })
+      continue
+    }
+    list[idx] = { ...list[idx], group: nextGroup }
+    updated.push(list[idx])
+  }
+  const data = { users: list }
+  localStorage.setItem('list', JSON.stringify(data))
+  await chromeSendTimeout('setBrowserList', 30000, data)
+  return { updated, failed }
 }
 
 export async function updateRuningState() {

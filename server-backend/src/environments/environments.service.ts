@@ -117,6 +117,73 @@ export class EnvironmentsService {
     }
   }
 
+  async createBatch(
+    user: UserRecord,
+    items: BrowserEnvironmentItem[]
+  ): Promise<{ created: BrowserEnvironmentItem[] }> {
+    const created: BrowserEnvironmentItem[] = []
+    for (const item of items || []) {
+      created.push(await this.create(user, item || {}))
+    }
+    return { created }
+  }
+
+  async removeBatch(
+    user: UserRecord,
+    ids: Array<string | number>
+  ): Promise<{ deleted: string[]; failed: Array<{ id: string; message: string }> }> {
+    const deleted: string[] = []
+    const failed: Array<{ id: string; message: string }> = []
+    for (const raw of ids || []) {
+      const id = String(raw ?? '').trim()
+      if (!id) {
+        failed.push({ id: String(raw), message: '无效 id' })
+        continue
+      }
+      try {
+        await this.remove(user, id)
+        deleted.push(id)
+      } catch (err) {
+        const message =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as { message?: unknown }).message || err)
+            : String(err)
+        failed.push({ id, message })
+      }
+    }
+    return { deleted, failed }
+  }
+
+  async updateGroupBatch(
+    user: UserRecord,
+    ids: Array<string | number>,
+    group: string
+  ): Promise<{ updated: BrowserEnvironmentItem[]; failed: Array<{ id: string; message: string }> }> {
+    const nextGroup = String(group ?? '').trim() || '默认分组'
+    const updated: BrowserEnvironmentItem[] = []
+    const failed: Array<{ id: string; message: string }> = []
+    for (const raw of ids || []) {
+      const id = String(raw ?? '').trim()
+      if (!id) {
+        failed.push({ id: String(raw), message: '无效 id' })
+        continue
+      }
+      try {
+        const current = await this.assertCanAccess(user, id)
+        const item = toBrowserItem(current)
+        item.group = nextGroup
+        updated.push(await this.update(user, id, item))
+      } catch (err) {
+        const message =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as { message?: unknown }).message || err)
+            : String(err)
+        failed.push({ id, message })
+      }
+    }
+    return { updated, failed }
+  }
+
   /** admin 一次性导入 legacy browser-list（跳过已存在 envId） */
   async importLegacy(
     user: UserRecord,

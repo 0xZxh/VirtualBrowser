@@ -9,6 +9,7 @@ const cloudSync = require('./cloud-sync')
 const crxStore = require('./crx-store')
 const cdpNavigate = require('./cdp-navigate')
 const { normalizeCookieEntry } = require('./cookie-normalize')
+const { logNative, warnNative, errorNative } = require('./file-logger')
 
 const repoRoot = path.join(__dirname, '../..')
 const pathsConfig = JSON.parse(
@@ -18,7 +19,8 @@ const pathsConfig = JSON.parse(
 const {
   getWorkersRoot,
   getGlobalDatFile,
-  getBrowserListFile
+  getBrowserListFile,
+  getLogsDir
 } = require('../../config/vb-paths')
 
 const innerExe = path.join(repoRoot, pathsConfig.innerExe.replace(/\//g, path.sep))
@@ -261,6 +263,46 @@ function releaseDebugPortForEnv(envId) {
   if (port != null) {
     releaseDebugPort(port)
     envDebugPorts.delete(envId)
+  }
+}
+
+function getEnvDebugPort(envId) {
+  const id = String(envId)
+  const port = envDebugPorts.get(id)
+  return port != null ? port : null
+}
+
+/**
+ * Resolve CDP DevTools frontend URL for a running env.
+ * @returns {Promise<{ port: number|null, url: string|null, error?: string }>}
+ */
+async function getEnvDebugInfo(envId) {
+  const id = String(envId)
+  const port = getEnvDebugPort(id)
+  if (port == null) {
+    return { port: null, url: null, error: '环境未运行或无 debugging 端口' }
+  }
+  const fallback = `http://127.0.0.1:${port}/json/list`
+  try {
+    const targets = await cdpNavigate.listTargets(port)
+    const page =
+      targets.find(t => t.type === 'page' && t.devtoolsFrontendUrl) ||
+      targets.find(t => t.devtoolsFrontendUrl) ||
+      targets[0]
+    let url = fallback
+    if (page && page.devtoolsFrontendUrl) {
+      const df = String(page.devtoolsFrontendUrl)
+      if (/^https?:\/\//i.test(df)) {
+        url = df
+      } else {
+        url = `http://127.0.0.1:${port}${df.startsWith('/') ? '' : '/'}${df}`
+      }
+    }
+    return { port, url }
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err)
+    warnNative('getEnvDebugInfo failed', { envId: id, port, error: msg })
+    return { port, url: fallback, error: msg }
   }
 }
 
@@ -646,6 +688,7 @@ async function launchBrowser(envId, req, options = {}) {
   running.set(id, proc)
   attachExitHandler(proc, id, workerDir, req)
   console.log('[native-runtime] launchBrowser id=', id, 'debuggingPort=', debuggingPort)
+  logNative('launchBrowser', { envId: id, debuggingPort })
 
   // 先等 CDP 就绪再给 UI 成功；否则 spawn 成功但内核秒崩会被误判为「已启动」
   const CDP_READY_MS = 20000
@@ -684,6 +727,7 @@ async function launchBrowser(envId, req, options = {}) {
     running.delete(id)
     releaseDebugPortForEnv(id)
     const msg = String((err && err.message) || err)
+    errorNative('launchBrowser CDP ready failed', { envId: id, error: msg })
     if (/CDP|未就绪|timeout/i.test(msg)) {
       throw new Error(
         `指纹内核未在规定时间内就绪（${msg}）。请关闭残留的指纹窗口后重试；启动前会自动清理占用该环境的内核进程。`
@@ -729,15 +773,28 @@ async function launchBrowser(envId, req, options = {}) {
           'fail=',
           result.fail
         )
+        logNative('CDP cookie inject', {
+          envId: id,
+          ok: result.ok,
+          fail: result.fail
+        })
         if (result.fail > 0 && result.errors && result.errors.length) {
           console.warn(
             '[native-runtime] CDP cookie inject errors:',
             result.errors.slice(0, 5).join('; ')
           )
+          warnNative('CDP cookie inject errors', {
+            envId: id,
+            errors: result.errors.slice(0, 5)
+          })
         }
       }
     } catch (err) {
       console.error('[native-runtime] CDP cookie inject failed:', err.message)
+      errorNative('CDP cookie inject failed', {
+        envId: id,
+        error: err && err.message ? err.message : String(err)
+      })
     }
   })()
 
@@ -893,6 +950,20 @@ async function handleNativeCall(name, params = [], req) {
       return stopBrowser(params[0], req)
     case 'getRuningBrowser':
       return getRunningIds()
+    case 'getEnvDebugPort':
+      return getEnvDebugPort(params[0])
+    case 'getEnvDebugInfo':
+      return getEnvDebugInfo(params[0])
+    case 'getLogsDir':
+      return getLogsDir()
+    case 'appendUiLog': {
+      const level = String((params[0] && params[0].level) || 'INFO').toUpperCase()
+      const message = String((params[0] && params[0].message) || '')
+      const meta = params[0] && params[0].meta
+      const { appendLog } = require('./file-logger')
+      appendLog('ui.log', level, message, meta)
+      return { ok: true }
+    }
     case 'getBrowserVersion':
       return pathsConfig.chromeVersion || '146.0.7680.72'
     case 'packProfile': {
@@ -984,6 +1055,8 @@ module.exports = {
   checkProxy,
   handleNativeCall,
   getRunningIds,
+  getEnvDebugPort,
+  getEnvDebugInfo,
   setBrowserExitListener,
   refreshWorkerVirtualDat,
   resolveLaunchStartupUrl

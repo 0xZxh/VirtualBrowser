@@ -53,6 +53,7 @@ export default {
     name: 'Name',
     browser: 'Browser',
     name_placeholder: 'Please enter browser name',
+    search_placeholder: 'Name / ID',
     search: 'Search',
     import: {
       import: 'Import',
@@ -64,6 +65,7 @@ export default {
     launch: 'Launch',
     launching: 'Launching',
     launched: 'Launched',
+    openDebug: 'Open Debug',
     edit: 'Edit',
     delete: 'Delete',
     cloudSync: 'Cloud Sync',

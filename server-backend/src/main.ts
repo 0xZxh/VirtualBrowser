@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
 import { HttpExceptionFilter } from './common/http-exception.filter'
+import { teeConsoleToFile } from './common/file-log.util'
 import { getLocalStorageKind, getStorageDriver } from './storage/storage.config'
 import * as express from 'express'
 
@@ -15,6 +16,8 @@ function getCorsOptions(): { origin: boolean | string[]; credentials: boolean } 
 }
 
 async function bootstrap() {
+  teeConsoleToFile('backend.log')
+
   const app = await NestFactory.create(AppModule, { bodyParser: false })
   const corsOptions = getCorsOptions()
   app.enableCors(corsOptions)

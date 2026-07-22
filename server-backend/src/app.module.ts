@@ -9,6 +9,7 @@ import { AppController } from './app.controller'
 import { BrowserModule } from './browser/browser.module'
 import { ApiKeysModule } from './api-keys/api-keys.module'
 import { IpGeoModule } from './ip-geo/ip-geo.module'
+import { SystemModule } from './system/system.module'
 
 @Module({
   imports: [
@@ -20,7 +21,8 @@ import { IpGeoModule } from './ip-geo/ip-geo.module'
     EnvironmentsModule,
     ApiKeysModule.forRoot(),
     BrowserModule,
-    IpGeoModule
+    IpGeoModule,
+    SystemModule
   ],
   controllers: [AppController]
 })
