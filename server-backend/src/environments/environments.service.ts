@@ -84,10 +84,15 @@ export class EnvironmentsService {
       throw new ForbiddenException({ code: 403, message: '无权修改该环境', envId })
     }
 
+    // 局部更新：与当前环境合并，避免只传 os/ua 时把 name/group 冲成 id/空串
+    const currentItem = toBrowserItem(current)
     const next = fromBrowserItem(
       {
+        ...currentItem,
         ...item,
-        id: item.id ?? envId
+        id: item.id ?? envId,
+        name: item.name != null && item.name !== '' ? item.name : currentItem.name,
+        group: item.group != null ? item.group : currentItem.group
       },
       current.ownerId,
       current.tenantId,
