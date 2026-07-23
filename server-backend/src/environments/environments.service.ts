@@ -13,6 +13,7 @@ import {
   fromBrowserItem,
   toBrowserItem
 } from './environment.types'
+import { withEnvironmentDefaults } from '../browser/fingerprint.defaults'
 
 @Injectable()
 export class EnvironmentsService {
@@ -57,9 +58,10 @@ export class EnvironmentsService {
 
   async create(user: UserRecord, item: BrowserEnvironmentItem): Promise<BrowserEnvironmentItem> {
     const envId = await this.nextEnvId(user.tenantId)
+    const prepared = withEnvironmentDefaults(item || {})
     const record = fromBrowserItem(
       {
-        ...item,
+        ...prepared,
         id: Number(envId)
       },
       user.id,

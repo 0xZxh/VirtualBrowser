@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="app-container">
     <div class="toolbar">
       <div class="toolbar-primary">
@@ -73,16 +73,19 @@
     </div>
 
     <el-table
+      ref="browserTable"
       :key="tableKey"
       v-loading="listLoading || batchBusy"
       :data="pagedList"
       :height="tableHeight"
+      :row-key="getRowKey"
       fit
-      highlight-current-row
       class="browser-table"
       @selection-change="handleSelectionChange"
+      @select="handleSelect"
+      @select-all="handleSelectAll"
     >
-      <el-table-column type="selection" width="60" align="center" />
+      <el-table-column type="selection" width="60" align="center" reserve-selection />
       <el-table-column :label="$t('browser.id')" prop="id" sortable align="center" width="80">
         <template slot-scope="{ row }">
           <span>{{ row.id }}</span>
@@ -870,6 +873,7 @@ import {
   updateRuningState,
   onBrowserExited,
   getGroupList,
+  addGroup,
   getLocalCrxList,
   getProfileSyncStatus,
   syncProfileToCloud,
@@ -1007,6 +1011,9 @@ export default {
       Channel: 'selfhost',
       saveApi: false,
       selectedRows: [],
+      /** 跨刷新保留勾选（id 一律转 string） */
+      selectedIdSet: {},
+      ignoreSelectionChange: false,
       chromeVer: '',
       tableKey: 0,
       list: null,
@@ -1158,6 +1165,12 @@ export default {
     }
   },
   watch: {
+    'listQuery.page'() {
+      this.$nextTick(() => this.restoreTableSelection())
+    },
+    'listQuery.limit'() {
+      this.$nextTick(() => this.restoreTableSelection())
+    },
     'form.proxy.host': function (newVal, oldVal) {
       const parts = newVal.split(':')
       if (parts.length === 4) {
@@ -1229,18 +1242,26 @@ export default {
     this._launchingIds = new Set()
     window._updateState = runingIds => {
       const ids = Array.isArray(runingIds) ? runingIds.map(String) : []
-      this.list = (this.list || []).map(item => {
+      // 原地改行状态，禁止 this.list = ... 换新数组，否则 el-table 会清空多选
+      ;(this.list || []).forEach(item => {
         const id = String(item.id)
-        item.isRunning = ids.includes(id)
-        if (item.isRunning) {
-          item.runLoading = false
+        const running = ids.includes(id)
+        if (item.isRunning !== running) {
+          this.$set(item, 'isRunning', running)
+        }
+        if (running) {
+          if (item.runLoading) {
+            this.$set(item, 'runLoading', false)
+          }
           this._launchingIds.delete(id)
         } else if (!this._launchingIds.has(id)) {
-          // 非启动请求中且已不在运行列表 → 清「启动中」（含进程退出）
-          item.runLoading = false
-          item.debuggingPort = null
+          if (item.runLoading) {
+            this.$set(item, 'runLoading', false)
+          }
+          if (item.debuggingPort != null) {
+            this.$set(item, 'debuggingPort', null)
+          }
         }
-        return item
       })
     }
   },
@@ -1387,6 +1408,7 @@ export default {
       await this.getList()
     },
     async getList() {
+      this.ignoreSelectionChange = true
       this.listLoading = true
       try {
         const fullList = await getBrowserList()
@@ -1405,6 +1427,9 @@ export default {
         this.$message.error((err && err.message) || '加载浏览器列表失败')
       } finally {
         this.listLoading = false
+        this.$nextTick(() => {
+          this.restoreTableSelection()
+        })
       }
     },
     async loadSyncStatuses() {
@@ -1489,8 +1514,73 @@ export default {
       this.listQuery.page = 1
       this.searchList()
     },
+    getRowKey(row) {
+      return row == null ? '' : String(row.id)
+    },
+    handleSelect() {
+      // selection-change 已统一维护 selectedIdSet
+    },
+    handleSelectAll() {
+      // selection-change 已统一维护 selectedIdSet
+    },
     handleSelectionChange(selection) {
-      this.selectedRows = selection
+      if (this.ignoreSelectionChange) return
+      // 刷新/loading/批量时 el-table 会先抛出空 selection，不能据此清空勾选
+      if ((this.listLoading || this.batchBusy) && (!selection || selection.length === 0)) {
+        return
+      }
+      const pageIds = new Set((this.pagedList || []).map(r => String(r.id)))
+      // 先清掉当前页旧勾选，再写入本次 selection（避免翻页/刷新丢其它页勾选）
+      Object.keys(this.selectedIdSet).forEach(id => {
+        if (pageIds.has(id)) {
+          this.$delete(this.selectedIdSet, id)
+        }
+      })
+      ;(selection || []).forEach(row => {
+        this.$set(this.selectedIdSet, String(row.id), true)
+      })
+      this.syncSelectedRowsFromList()
+    },
+    syncSelectedRowsFromList() {
+      const ids = this.selectedIdSet
+      const full = this.list || []
+      this.selectedRows = full.filter(row => ids[String(row.id)])
+    },
+    restoreTableSelection() {
+      const table = this.$refs.browserTable
+      if (!table || typeof table.clearSelection !== 'function') {
+        this.ignoreSelectionChange = false
+        return
+      }
+      this.ignoreSelectionChange = true
+      try {
+        table.clearSelection()
+        ;(this.pagedList || []).forEach(row => {
+          if (this.selectedIdSet[String(row.id)]) {
+            table.toggleRowSelection(row, true)
+          }
+        })
+        this.syncSelectedRowsFromList()
+      } finally {
+        this.$nextTick(() => {
+          this.ignoreSelectionChange = false
+        })
+      }
+    },
+    clearTableSelection() {
+      this.selectedIdSet = {}
+      this.selectedRows = []
+      const table = this.$refs.browserTable
+      if (table && typeof table.clearSelection === 'function') {
+        this.ignoreSelectionChange = true
+        try {
+          table.clearSelection()
+        } finally {
+          this.$nextTick(() => {
+            this.ignoreSelectionChange = false
+          })
+        }
+      }
     },
     handleBatchStart() {
       if (this.selectedRows.length === 0) {
@@ -1540,8 +1630,8 @@ export default {
           jsonStr: ''
         },
         homepage: {
-          mode: 0,
-          value: ''
+          mode: 1,
+          value: 'https://store.jddj.com/'
         },
         ua: {
           mode: 1,
@@ -2001,6 +2091,8 @@ export default {
           this.$set(row, 'deleteLoading', true)
           try {
             await deleteBrowser(row.id)
+            this.$delete(this.selectedIdSet, String(row.id))
+            this.syncSelectedRowsFromList()
             await this.refreshList()
             this.$notify({
               title: this.$t('browser.success'),
@@ -2119,11 +2211,16 @@ export default {
           if (!Array.isArray(json)) {
             throw new Error('导入文件必须是环境数组 JSON')
           }
+          const groupNames = json
+            .map(item => (item && item.group != null ? String(item.group).trim() : ''))
+            .filter(Boolean)
+          await this.ensureGroupsExist(groupNames)
           for (let i = 0; i < json.length; i++) {
             const item = this.normalizeImportItem(json[i])
             await addBrowser(item)
           }
 
+          await this.reloadGroupList()
           await this.getList()
           this.$notify({
             title: this.$t('browser.success'),
@@ -2147,6 +2244,25 @@ export default {
         }
       }
       reader.readAsText(file)
+    },
+    async reloadGroupList() {
+      const list = await getGroupList()
+      this.GroupList = [{ id: 0, name: this.$t('group.default') }, ...list]
+    },
+    async ensureGroupsExist(names) {
+      const defaultName = this.$t('group.default')
+      const existing = new Set(
+        (this.GroupList || [])
+          .map(g => (g && g.name != null ? String(g.name).trim() : ''))
+          .filter(Boolean)
+      )
+      existing.add(defaultName)
+      const unique = [...new Set((names || []).map(n => String(n || '').trim()).filter(Boolean))]
+      for (const name of unique) {
+        if (existing.has(name)) continue
+        await addGroup({ name, timestamp: Date.now() }, name)
+        existing.add(name)
+      }
     },
     onExport() {
       if (this.selectedRows.length === 0) {
@@ -2387,6 +2503,10 @@ export default {
           rows.forEach(row => this.$set(row, 'deleteLoading', true))
           try {
             const result = await batchDeleteBrowsers(rows.map(row => row.id))
+            ;(result.deleted || []).forEach(id => {
+              this.$delete(this.selectedIdSet, String(id))
+            })
+            this.syncSelectedRowsFromList()
             await this.refreshList()
             const deleted = (result && result.deleted && result.deleted.length) || 0
             const failed = (result && result.failed && result.failed.length) || 0
@@ -2499,11 +2619,14 @@ export default {
       // 已能自动推导自建 URL，不再强制弹设置窗
     },
     async searchList() {
+      this.ignoreSelectionChange = true
       try {
         const fullList = await getBrowserList()
         this.list = this.applyListFilters(fullList)
       } catch (error) {
         console.error('Search failed:', error)
+      } finally {
+        this.$nextTick(() => this.restoreTableSelection())
       }
     },
     handleBatchSetGroup() {
