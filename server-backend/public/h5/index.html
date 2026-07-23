@@ -45,7 +45,16 @@
           </label>
           <label>
             分组
-            <input id="envGroup" placeholder="默认分组" value="默认分组" />
+            <div class="combo">
+              <input
+                id="envGroup"
+                autocomplete="off"
+                placeholder="搜索或输入新分组"
+                value="默认分组"
+              />
+              <ul id="groupSuggest" class="combo-list hidden" role="listbox"></ul>
+            </div>
+            <span class="field-hint">可搜索已有分组；输入新名称将自动创建</span>
           </label>
           <label>
             启动主页

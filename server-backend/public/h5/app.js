@@ -2,6 +2,7 @@
   const TOKEN_KEY = 'VB_H5_TOKEN'
   const USER_KEY = 'VB_H5_USER'
   const DEFAULT_HOME = 'https://store.jddj.com/'
+  const DEFAULT_GROUP = '默认分组'
 
   const $ = (id) => document.getElementById(id)
 
@@ -11,6 +12,11 @@
   const userNameEl = $('userName')
   const loginError = $('loginError')
   const createMsg = $('createMsg')
+  const envGroupInput = $('envGroup')
+  const groupSuggest = $('groupSuggest')
+
+  let groupNames = [DEFAULT_GROUP]
+  let suggestOpen = false
 
   function apiBase() {
     // Same-origin when served from Nest /h5/
@@ -69,13 +75,124 @@
     return data
   }
 
+  function normalizeGroupList(list) {
+    const names = new Set([DEFAULT_GROUP])
+    ;(list || []).forEach((item) => {
+      const name =
+        typeof item === 'string'
+          ? item.trim()
+          : item && item.name != null
+            ? String(item.name).trim()
+            : ''
+      if (name) names.add(name)
+    })
+    return Array.from(names).sort((a, b) => {
+      if (a === DEFAULT_GROUP) return -1
+      if (b === DEFAULT_GROUP) return 1
+      return a.localeCompare(b, 'zh')
+    })
+  }
+
+  async function loadGroups() {
+    try {
+      const res = await request('/api/groups')
+      groupNames = normalizeGroupList(res.data)
+    } catch {
+      groupNames = normalizeGroupList(groupNames)
+    }
+    if (!envGroupInput.value.trim()) {
+      envGroupInput.value = DEFAULT_GROUP
+    }
+  }
+
+  function filterGroups(query) {
+    const q = String(query || '').trim().toLowerCase()
+    if (!q) return groupNames.slice()
+    return groupNames.filter((name) => name.toLowerCase().includes(q))
+  }
+
+  function hideSuggest() {
+    suggestOpen = false
+    groupSuggest.classList.add('hidden')
+    groupSuggest.innerHTML = ''
+  }
+
+  function showSuggest(query) {
+    const q = String(query || '').trim()
+    const matched = filterGroups(q)
+    const exact = groupNames.some((name) => name === q)
+    groupSuggest.innerHTML = ''
+
+    matched.forEach((name) => {
+      const li = document.createElement('li')
+      li.setAttribute('role', 'option')
+      li.textContent = name
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        envGroupInput.value = name
+        hideSuggest()
+      })
+      groupSuggest.appendChild(li)
+    })
+
+    if (q && !exact) {
+      const li = document.createElement('li')
+      li.className = 'create'
+      li.setAttribute('role', 'option')
+      li.textContent = '创建分组「' + q + '」'
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        envGroupInput.value = q
+        hideSuggest()
+      })
+      groupSuggest.appendChild(li)
+    }
+
+    if (!groupSuggest.children.length) {
+      const li = document.createElement('li')
+      li.className = 'muted'
+      li.textContent = '暂无匹配，输入后将自动创建'
+      groupSuggest.appendChild(li)
+    }
+
+    suggestOpen = true
+    groupSuggest.classList.remove('hidden')
+  }
+
+  function bindGroupCombo() {
+    envGroupInput.addEventListener('focus', () => {
+      showSuggest(envGroupInput.value)
+    })
+    envGroupInput.addEventListener('input', () => {
+      showSuggest(envGroupInput.value)
+    })
+    envGroupInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideSuggest()
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        hideSuggest()
+      }
+    })
+    envGroupInput.addEventListener('blur', () => {
+      setTimeout(hideSuggest, 150)
+    })
+    document.addEventListener('click', (e) => {
+      if (!suggestOpen) return
+      const wrap = envGroupInput.closest('.combo')
+      if (wrap && !wrap.contains(e.target)) hideSuggest()
+    })
+  }
+
   function showLogin() {
     loginView.classList.remove('hidden')
     createView.classList.add('hidden')
     userBar.classList.add('hidden')
   }
 
-  function showCreate(user) {
+  async function showCreate(user) {
     loginView.classList.add('hidden')
     createView.classList.remove('hidden')
     userBar.classList.remove('hidden')
@@ -83,11 +200,14 @@
     if (!$('envHomepage').value) {
       $('envHomepage').value = DEFAULT_HOME
     }
+    if (!envGroupInput.value.trim()) {
+      envGroupInput.value = DEFAULT_GROUP
+    }
+    await loadGroups()
   }
 
   async function boot() {
     const token = getToken()
-    const cached = getUser()
     if (!token) {
       showLogin()
       return
@@ -102,7 +222,7 @@
         return
       }
       setSession(token, user)
-      showCreate(user)
+      await showCreate(user)
     } catch (err) {
       clearSession()
       showLogin()
@@ -130,7 +250,7 @@
         throw new Error('当前账号无创建权限（需要 admin / operator）')
       }
       setSession(token, user)
-      showCreate(user)
+      await showCreate(user)
     } catch (err) {
       loginError.textContent = err.message || String(err)
     } finally {
@@ -152,7 +272,7 @@
     createMsg.textContent = ''
     createMsg.className = 'msg'
     const name = $('envName').value.trim()
-    const group = $('envGroup').value.trim() || '默认分组'
+    const group = envGroupInput.value.trim() || DEFAULT_GROUP
     const homepage = $('envHomepage').value.trim() || DEFAULT_HOME
     const cookieRaw = $('envCookie').value.trim()
 
@@ -206,12 +326,18 @@
 
     $('btnCreate').disabled = true
     try {
+      // 不存在则创建分组（服务端 create 也会 ensure；此处保证列表即时刷新）
+      if (!groupNames.includes(group)) {
+        await request('/api/groups', { method: 'POST', body: { name: group } })
+      }
       const res = await request('/api/environments', { method: 'POST', body })
       const id = res.data && res.data.id
       createMsg.textContent = '创建成功' + (id != null ? '，环境 ID：' + id : '')
       createMsg.classList.add('ok')
       $('envName').value = ''
       $('envCookie').value = ''
+      await loadGroups()
+      envGroupInput.value = group
     } catch (err) {
       createMsg.textContent = err.message || String(err)
       createMsg.classList.add('err')
@@ -220,5 +346,6 @@
     }
   })
 
+  bindGroupCombo()
   boot()
 })()
