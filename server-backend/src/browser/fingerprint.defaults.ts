@@ -1,5 +1,6 @@
 import { BrowserEnvironmentItem } from '../environments/environment.types'
 import { randomizeFingerprintFields } from './fingerprint.randomize'
+import { domainFromHomepage, parseCookieInput } from './cookie-parse'
 
 export const DEFAULT_HOMEPAGE = 'https://store.jddj.com/'
 
@@ -73,8 +74,12 @@ export function buildDefaultEnvironmentItem(
     }
   }
 
+  const homepageValue =
+    (randomized.homepage as { value?: string } | undefined)?.value ||
+    DEFAULT_HOMEPAGE
+
   if (partial.cookie != null) {
-    randomized.cookie = normalizeCookieInput(partial.cookie)
+    randomized.cookie = normalizeCookieInput(partial.cookie, homepageValue)
   }
 
   if (partial.proxy != null) randomized.proxy = partial.proxy
@@ -84,7 +89,10 @@ export function buildDefaultEnvironmentItem(
   return randomized as BrowserEnvironmentItem
 }
 
-function normalizeCookieInput(cookie: unknown): {
+function normalizeCookieInput(
+  cookie: unknown,
+  homepage?: string
+): {
   mode: number
   value: unknown
   jsonStr: string
@@ -96,21 +104,35 @@ function normalizeCookieInput(cookie: unknown): {
   let value = c.value
   let jsonStr = c.jsonStr != null ? String(c.jsonStr) : ''
   let mode = Number(c.mode)
+  const domain = domainFromHomepage(homepage || DEFAULT_HOMEPAGE)
+
+  const fillDefaults = (list: Array<Record<string, unknown>>) =>
+    list.map(item => {
+      if (!item || typeof item !== 'object') return item
+      const out = { ...item }
+      if (out.domain == null || out.domain === '') out.domain = domain
+      if (out.path == null || out.path === '') out.path = '/'
+      return out
+    })
 
   if ((!Array.isArray(value) || !value.length) && jsonStr.trim()) {
-    try {
-      const parsed = JSON.parse(jsonStr)
-      if (Array.isArray(parsed)) {
-        value = parsed
-        mode = 1
-        jsonStr = JSON.stringify(parsed, null, 2)
-      }
-    } catch {
-      // keep as-is
+    const parsed = parseCookieInput(jsonStr, { domain, homepage })
+    if (parsed && parsed.length) {
+      value = fillDefaults(parsed)
+      mode = 1
+      jsonStr = JSON.stringify(value, null, 2)
     }
   } else if (Array.isArray(value) && value.length) {
     mode = 1
+    value = fillDefaults(value as Array<Record<string, unknown>>)
     if (!jsonStr.trim()) {
+      jsonStr = JSON.stringify(value, null, 2)
+    }
+  } else if (typeof value === 'string' && value.trim()) {
+    const parsed = parseCookieInput(value, { domain, homepage })
+    if (parsed && parsed.length) {
+      value = fillDefaults(parsed)
+      mode = 1
       jsonStr = JSON.stringify(value, null, 2)
     }
   }
@@ -149,7 +171,7 @@ export function withEnvironmentDefaults(
     if (src.cookie != null) {
       return {
         ...(src as BrowserEnvironmentItem),
-        cookie: normalizeCookieInput(src.cookie)
+        cookie: normalizeCookieInput(src.cookie, hp.value)
       }
     }
     return src as BrowserEnvironmentItem

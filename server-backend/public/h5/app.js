@@ -169,20 +169,38 @@
     }
 
     if (cookieRaw) {
-      try {
-        const parsed = JSON.parse(cookieRaw)
-        if (!Array.isArray(parsed)) {
-          throw new Error('Cookie 必须是 JSON 数组')
-        }
-        body.cookie = {
-          mode: 1,
-          value: parsed,
-          jsonStr: JSON.stringify(parsed, null, 2)
-        }
-      } catch (err) {
-        createMsg.textContent = 'Cookie 格式错误: ' + (err.message || err)
+      const parse = window.VbCookieParse
+      if (!parse || typeof parse.parseCookieInput !== 'function') {
+        createMsg.textContent = 'Cookie 解析脚本未加载'
         createMsg.classList.add('err')
         return
+      }
+      const domain = parse.domainFromHomepage(homepage)
+      const parsed = parse.parseCookieInput(cookieRaw, { domain, homepage })
+      if (!parsed || !parsed.length) {
+        createMsg.textContent = 'Cookie 格式错误：请粘贴 JSON 数组或 name=value; ... 头格式'
+        createMsg.classList.add('err')
+        return
+      }
+      const withDomain = parsed.map((item) => {
+        if (!item || typeof item !== 'object') return item
+        const c = Object.assign({}, item)
+        if (!c.domain) c.domain = domain
+        if (!c.path) c.path = '/'
+        return c
+      })
+      const invalid = withDomain.some(
+        (c) => !c || !c.name || c.value == null || c.value === '' || !c.domain
+      )
+      if (invalid) {
+        createMsg.textContent = 'Cookie 格式错误：缺少 name/value/domain'
+        createMsg.classList.add('err')
+        return
+      }
+      body.cookie = {
+        mode: 1,
+        value: withDomain,
+        jsonStr: JSON.stringify(withDomain, null, 2)
       }
     }
 

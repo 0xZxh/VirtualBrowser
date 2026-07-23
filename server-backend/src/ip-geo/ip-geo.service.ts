@@ -202,20 +202,32 @@ function isPrivateOrInvalidIp(ip: string): boolean {
 
 function timezoneOffsetHours(timeZone: string): number {
   if (!timeZone) return 0
+  // Prefer Intl longOffset (GMT+08:00). Some Node/ICU builds only yield "GMT".
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone,
       timeZoneName: 'longOffset'
     }).formatToParts(new Date())
     const tzName = parts.find((p) => p.type === 'timeZoneName')?.value || ''
-    // GMT, GMT+8, GMT+08:00, GMT-5:30
-    const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(tzName)
-    if (!m) return 0
-    const sign = m[1] === '-' ? -1 : 1
-    const hours = Number(m[2])
-    const mins = Number(m[3] || 0)
-    const total = sign * (hours + mins / 60)
-    // Prefer integer when whole hours (matches existing sample / getZone usage)
+    // GMT, GMT+8, GMT+08:00, GMT-5:30, UTC+8
+    const m = /(?:GMT|UTC)([+-])(\d{1,2})(?::(\d{2}))?/.exec(tzName)
+    if (m) {
+      const sign = m[1] === '-' ? -1 : 1
+      const hours = Number(m[2])
+      const mins = Number(m[3] || 0)
+      const total = sign * (hours + mins / 60)
+      return Number.isInteger(total) ? total : Math.round(total * 100) / 100
+    }
+  } catch {
+    // fall through
+  }
+  // Fallback: locale string delta (works when longOffset is unavailable)
+  try {
+    const now = new Date()
+    const utcMs = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })).getTime()
+    const tzMs = new Date(now.toLocaleString('en-US', { timeZone })).getTime()
+    if (!Number.isFinite(utcMs) || !Number.isFinite(tzMs)) return 0
+    const total = (tzMs - utcMs) / 3600000
     return Number.isInteger(total) ? total : Math.round(total * 100) / 100
   } catch {
     return 0

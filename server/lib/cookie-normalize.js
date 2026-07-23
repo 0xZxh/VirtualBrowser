@@ -3,6 +3,8 @@
  * Keeps domain / SameSite+Secure rules consistent across UI and native runtime.
  */
 
+const DEFAULT_COOKIE_DOMAIN = '.jddj.com'
+
 function sanitizeCookieDomain(domain) {
   let d = String(domain == null ? '' : domain).trim()
   if (!d) return d
@@ -13,6 +15,98 @@ function sanitizeCookieDomain(domain) {
   if (q >= 0) d = d.slice(0, q)
   if (d.startsWith('*.')) d = `.${d.slice(2)}`
   return d
+}
+
+/**
+ * Derive cookie domain from homepage URL.
+ * https://store.jddj.com/ → .jddj.com
+ */
+function domainFromHomepage(url) {
+  const fallback = DEFAULT_COOKIE_DOMAIN
+  if (url == null || String(url).trim() === '') return fallback
+  try {
+    let raw = String(url).trim()
+    if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`
+    const host = new URL(raw).hostname
+    if (!host) return fallback
+    const parts = host.split('.').filter(Boolean)
+    if (parts.length >= 2) return `.${parts.slice(-2).join('.')}`
+    return host.startsWith('.') ? host : `.${host}`
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * Parse Cookie request-header style string: name=value; name2=value2
+ */
+function parseCookieHeader(str, options) {
+  const text = String(str == null ? '' : str).trim()
+  if (!text) return null
+  const domain =
+    options && options.domain != null && String(options.domain).trim()
+      ? sanitizeCookieDomain(options.domain)
+      : DEFAULT_COOKIE_DOMAIN
+  const parts = text.split(';')
+  const list = []
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim()
+    if (!part) continue
+    const eq = part.indexOf('=')
+    if (eq <= 0) continue
+    const name = part.slice(0, eq).trim()
+    const value = part.slice(eq + 1)
+    if (!name) continue
+    list.push({
+      name,
+      value,
+      domain,
+      path: '/',
+      sameSite: '',
+      session: false,
+      secure: false,
+      httpOnly: false
+    })
+  }
+  return list.length ? list : null
+}
+
+/**
+ * Accept JSON cookie array (string or array) or Cookie header string.
+ * Returns array or null.
+ */
+function parseCookieInput(raw, options) {
+  if (Array.isArray(raw)) {
+    return raw.length ? raw : null
+  }
+  if (raw == null) return null
+  if (typeof raw !== 'string') return null
+  const text = raw.trim()
+  if (!text) return null
+
+  const domain =
+    options && options.domain != null && String(options.domain).trim()
+      ? sanitizeCookieDomain(options.domain)
+      : options && options.homepage
+        ? domainFromHomepage(options.homepage)
+        : DEFAULT_COOKIE_DOMAIN
+
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) return parsed.length ? parsed : null
+  } catch {
+    // not JSON
+  }
+
+  try {
+    // eslint-disable-next-line no-eval
+    const parsed = eval(`(${text})`)
+    if (Array.isArray(parsed)) return parsed.length ? parsed : null
+  } catch {
+    // not JS array literal
+  }
+
+  return parseCookieHeader(text, { domain })
 }
 
 /**
@@ -121,6 +215,10 @@ function formatCdpCookieError(params, detail) {
 }
 
 module.exports = {
+  DEFAULT_COOKIE_DOMAIN,
+  domainFromHomepage,
+  parseCookieHeader,
+  parseCookieInput,
   sanitizeCookieDomain,
   normalizeSameSite,
   normalizeCookieEntry,

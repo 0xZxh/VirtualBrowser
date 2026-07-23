@@ -8,7 +8,9 @@ const {
   sanitizeCookieDomain,
   normalizeCookieEntry,
   normalizeCookieList,
-  toCdpCookieParams
+  toCdpCookieParams,
+  domainFromHomepage,
+  parseCookieInput
 } = require('../cookie-normalize')
 const { toCdpCookieParams: viaCdpNavigate } = require('../cdp-navigate')
 
@@ -60,6 +62,19 @@ const withUrl = toCdpCookieParams({
 })
 assert.strictEqual(withUrl.url, 'https://www.example.com/')
 assert.strictEqual(withUrl.secure, true)
+
+assert.strictEqual(domainFromHomepage('https://store.jddj.com/'), '.jddj.com')
+assert.strictEqual(domainFromHomepage(''), '.jddj.com')
+
+const header = parseCookieInput('_jda=1; thor=abc; pin=%E9%87%91', {
+  homepage: 'https://store.jddj.com/'
+})
+assert.ok(header)
+assert.strictEqual(header.length, 3)
+assert.strictEqual(header[0].name, '_jda')
+assert.strictEqual(header[0].domain, '.jddj.com')
+assert.strictEqual(header[0].path, '/')
+assert.strictEqual(header[2].value, '%E9%87%91')
 
 console.log('ok: cookie-normalize smoke')
 console.log(

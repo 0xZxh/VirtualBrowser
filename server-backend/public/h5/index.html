@@ -52,11 +52,11 @@
             <input id="envHomepage" value="https://store.jddj.com/" />
           </label>
           <label>
-            Cookie（可选，JSON 数组）
+            Cookie（可选）
             <textarea
               id="envCookie"
               rows="6"
-              placeholder='[{"name":"...","value":"...","domain":".jddj.com","path":"/"}]'
+              placeholder="支持 JSON 数组，或直接粘贴 a=1; b=2 Cookie 头"
             ></textarea>
           </label>
           <button type="button" id="btnCreate" class="primary">创建</button>
@@ -64,6 +64,7 @@
         </section>
       </main>
     </div>
+    <script src="./cookie-parse.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

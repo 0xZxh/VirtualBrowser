@@ -903,7 +903,12 @@ import uaFullVersions from '@/utils/ua-full-versions.json'
 import WebGLRenders from '@/utils/webgl.json'
 import { getFontList } from '@/utils/fonts'
 import { compareVersions } from 'compare-versions'
-import { normalizeCookieEntry, normalizeCookieList } from '@lib/cookie-normalize'
+import {
+  domainFromHomepage,
+  normalizeCookieEntry,
+  normalizeCookieList,
+  parseCookieInput
+} from '@lib/cookie-normalize'
 
 let IPGeo = {}
 let fontList = []
@@ -943,16 +948,13 @@ export default {
           return
         }
 
-        let json
-        try {
-          // eslint-disable-next-line no-eval
-          json = eval(`(${value})`)
-        } catch {
-          callback(new Error(this.$t('browser.cookie.format_error')))
-          return
-        }
-
-        if (Object.prototype.toString.call(json) !== '[object Array]') {
+        const homepage =
+          this.form.homepage && this.form.homepage.value ? this.form.homepage.value : ''
+        const parsed = parseCookieInput(value, {
+          domain: domainFromHomepage(homepage),
+          homepage
+        })
+        if (!parsed || !parsed.length) {
           callback(new Error(this.$t('browser.cookie.format_error')))
           return
         }
@@ -963,7 +965,7 @@ export default {
           }
         }
 
-        json = json.map(item => {
+        const json = parsed.map(item => {
           if (!item || typeof item !== 'object') {
             throw new Error('invalid_cookie_item')
           }
@@ -980,12 +982,16 @@ export default {
           setDefaultValue(cookie, 'session', false)
           setDefaultValue(cookie, 'secure', false)
           setDefaultValue(cookie, 'httpOnly', false)
+          setDefaultValue(cookie, 'path', '/')
+          if (!cookie.domain) {
+            cookie.domain = domainFromHomepage(homepage)
+          }
 
           return normalizeCookieEntry(cookie)
         })
 
         const checkNameValue = json.every(item => {
-          return item.name && item.value && item.domain
+          return item.name && item.value != null && item.value !== '' && item.domain
         })
 
         if (!checkNameValue) {
@@ -1901,30 +1907,40 @@ export default {
         proxy.url = url
       }
 
-      // Cookie 表单绑 jsonStr，落盘用 value：mode=1 时解析写入数组
+      // Cookie 表单绑 jsonStr，落盘用 value：mode=1 时解析写入数组（支持 JSON 数组与 Cookie 头）
       if (data.cookie) {
         if (Number(data.cookie.mode) === 1) {
+          const homepage = data.homepage && data.homepage.value ? data.homepage.value : ''
+          const domain = domainFromHomepage(homepage)
           const raw =
             data.cookie.jsonStr != null && String(data.cookie.jsonStr).trim() !== ''
               ? data.cookie.jsonStr
               : typeof data.cookie.value === 'string'
               ? data.cookie.value
+              : Array.isArray(data.cookie.value)
+              ? data.cookie.value
               : null
-          if (raw != null && typeof raw === 'string' && String(raw).trim() !== '') {
-            try {
-              // eslint-disable-next-line no-eval
-              const json = eval(`(${raw})`)
-              if (Array.isArray(json)) {
-                const normalized = normalizeCookieList(json)
-                data.cookie.value = normalized
-                data.cookie.jsonStr = JSON.stringify(normalized, null, 2)
-              }
-            } catch (err) {
-              if (!Array.isArray(data.cookie.value)) {
-                console.warn('[preProcessData] cookie jsonStr parse failed', err)
-              } else {
-                data.cookie.value = normalizeCookieList(data.cookie.value)
-              }
+          if (raw != null) {
+            const json = parseCookieInput(raw, { domain, homepage })
+            if (json && json.length) {
+              const withDefaults = json.map(item => {
+                if (!item || typeof item !== 'object') return item
+                const cookie = { ...item }
+                if (cookie.domain == null || cookie.domain === '') {
+                  cookie.domain = domain
+                }
+                if (cookie.path == null || cookie.path === '') {
+                  cookie.path = '/'
+                }
+                return cookie
+              })
+              const normalized = normalizeCookieList(withDefaults)
+              data.cookie.value = normalized
+              data.cookie.jsonStr = JSON.stringify(normalized, null, 2)
+            } else if (Array.isArray(data.cookie.value)) {
+              data.cookie.value = normalizeCookieList(data.cookie.value)
+            } else {
+              console.warn('[preProcessData] cookie parse failed')
             }
           } else if (Array.isArray(data.cookie.value)) {
             data.cookie.value = normalizeCookieList(data.cookie.value)
@@ -1955,26 +1971,9 @@ export default {
         this.$message.error(this.$t('browser.required') || '表单校验失败')
       }
     },
-    parseCookieArray(raw) {
-      if (Array.isArray(raw)) return raw
-      if (raw == null || raw === '') return null
-      if (typeof raw === 'string') {
-        const text = raw.trim()
-        if (!text) return null
-        try {
-          const parsed = JSON.parse(text)
-          return Array.isArray(parsed) ? parsed : null
-        } catch {
-          try {
-            // eslint-disable-next-line no-eval
-            const parsed = eval(`(${text})`)
-            return Array.isArray(parsed) ? parsed : null
-          } catch {
-            return null
-          }
-        }
-      }
-      return null
+    parseCookieArray(raw, homepage) {
+      const domain = domainFromHomepage(homepage)
+      return parseCookieInput(raw, { domain, homepage })
     },
     normalizeImportItem(raw) {
       const defaults = this.getDefaultForm()
@@ -2000,6 +1999,12 @@ export default {
         item.cookie = { mode: 0, value: '', jsonStr: '' }
       }
 
+      const homepage =
+        (item.homepage && item.homepage.value) ||
+        (defaults.homepage && defaults.homepage.value) ||
+        ''
+      const domain = domainFromHomepage(homepage)
+
       let cookies = null
       if (Array.isArray(src.cookieData) && src.cookieData.length) {
         cookies = src.cookieData
@@ -2007,10 +2012,18 @@ export default {
         cookies = item.cookie.value
       } else {
         cookies =
-          this.parseCookieArray(item.cookie.jsonStr) || this.parseCookieArray(item.cookie.value)
+          this.parseCookieArray(item.cookie.jsonStr, homepage) ||
+          this.parseCookieArray(item.cookie.value, homepage)
       }
 
       if (cookies && cookies.length) {
+        cookies = cookies.map(c => {
+          if (!c || typeof c !== 'object') return c
+          const out = { ...c }
+          if (!out.domain) out.domain = domain
+          if (!out.path) out.path = '/'
+          return out
+        })
         item.cookie.mode = 1
         item.cookie.value = normalizeCookieList(cookies)
         item.cookie.jsonStr = JSON.stringify(item.cookie.value, null, 2)
