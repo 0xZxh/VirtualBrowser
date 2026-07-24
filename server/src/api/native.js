@@ -459,7 +459,7 @@ export async function deleteBrowser(id) {
   await chromeSendTimeout('setBrowserList', 30000, data)
 }
 
-const IMPORT_BATCH_SIZE = 80
+const IMPORT_BATCH_SIZE = 25
 
 export async function batchAddBrowsers(items, defaultName) {
   const listItems = Array.isArray(items) ? items : []

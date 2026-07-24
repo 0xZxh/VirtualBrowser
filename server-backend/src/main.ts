@@ -54,7 +54,9 @@ async function bootstrap() {
     if (isSnapshotUpload) {
       express.raw({ type: '*/*', limit: '512mb' })(req, res, next)
     } else {
-      express.json({ limit: '2mb' })(req, res, next)
+      // 批量导入环境（含 cookie/指纹）远超默认 100kb；可用 BODY_JSON_LIMIT 覆盖
+      const jsonLimit = process.env.BODY_JSON_LIMIT?.trim() || '32mb'
+      express.json({ limit: jsonLimit })(req, res, next)
     }
   })
 
