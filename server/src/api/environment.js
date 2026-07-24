@@ -1,8 +1,16 @@
 import request from '@/utils/request'
 
-export function fetchEnvironments() {
+export function fetchEnvironments(params = {}) {
   return request({
     url: '/api/environments',
+    method: 'get',
+    params
+  })
+}
+
+export function fetchEnvironment(envId) {
+  return request({
+    url: `/api/environments/${envId}`,
     method: 'get'
   })
 }

@@ -76,7 +76,7 @@
       ref="browserTable"
       :key="tableKey"
       v-loading="listLoading || batchBusy"
-      :data="pagedList"
+      :data="list"
       :height="tableHeight"
       :row-key="getRowKey"
       fit
@@ -242,10 +242,11 @@
     </el-table>
 
     <pagination
-      v-show="list && list.length > 0"
-      :total="list.length"
+      v-show="listTotal > 0"
+      :total="listTotal"
       :page.sync="listQuery.page"
       :limit.sync="listQuery.limit"
+      @pagination="getList"
     />
 
     <el-drawer
@@ -858,7 +859,7 @@
 
 <script>
 import {
-  getBrowserList,
+  getBrowserListPage,
   getGlobalData,
   setGlobalData,
   getDefaultIpGeoApiLink,
@@ -877,7 +878,8 @@ import {
   getLocalCrxList,
   getProfileSyncStatus,
   syncProfileToCloud,
-  syncProfileFromCloud
+  syncProfileFromCloud,
+  ensureEnvInBridge
 } from '@/api/native'
 import { saveAs } from 'file-saver'
 import waves from '@/directive/waves' // waves directive
@@ -1023,6 +1025,7 @@ export default {
       chromeVer: '',
       tableKey: 0,
       list: null,
+      listTotal: 0,
       listLoading: true,
       batchBusy: false,
       tableHeight: 480,
@@ -1161,13 +1164,6 @@ export default {
   computed: {
     language() {
       return this.$store.getters.language
-    },
-    pagedList() {
-      const list = this.list || []
-      const page = this.listQuery.page || 1
-      const limit = this.listQuery.limit || 20
-      const start = (page - 1) * limit
-      return list.slice(start, start + limit)
     }
   },
   watch: {
@@ -1385,31 +1381,6 @@ export default {
       if (!row) return false
       return !!(row.deleteLoading || row.groupLoading || row.runLoading || this.batchBusy)
     },
-    applyListFilters(fullList) {
-      let next = Array.isArray(fullList) ? fullList.slice() : []
-      const group = this.listQuery.group
-      if (group) {
-        next = next.filter(item => item.group === group)
-      }
-      const title = this.listQuery.title != null ? String(this.listQuery.title).trim() : ''
-      if (title) {
-        const q = title.toLowerCase()
-        next = next.filter(item => {
-          const itemName = String(item.name == null ? '' : item.name).toLowerCase()
-          const itemId = String(item.id == null ? '' : item.id)
-          const itemIdLower = itemId.toLowerCase()
-          return (
-            itemId === title || itemIdLower === q || itemName.includes(q) || itemIdLower.includes(q)
-          )
-        })
-      }
-      const limit = this.listQuery.limit || 20
-      const maxPage = Math.max(1, Math.ceil((next.length || 0) / limit) || 1)
-      if (this.listQuery.page > maxPage) {
-        this.listQuery.page = maxPage
-      }
-      return next
-    },
     async refreshList() {
       await this.getList()
     },
@@ -1417,19 +1388,33 @@ export default {
       this.ignoreSelectionChange = true
       this.listLoading = true
       try {
-        const fullList = await getBrowserList()
+        const title = this.listQuery.title != null ? String(this.listQuery.title).trim() : ''
+        const result = await getBrowserListPage({
+          page: this.listQuery.page || 1,
+          limit: this.listQuery.limit || 20,
+          group: this.listQuery.group || undefined,
+          q: title || undefined
+        })
         this.GlobalData = await getGlobalData()
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
-        // processUpdateData needs full working set; apply after mutate
-        this.list = fullList
+        this.list = result.items || []
+        this.listTotal = Number(result.total) || 0
+        const maxPage = Math.max(1, Math.ceil(this.listTotal / (this.listQuery.limit || 20)) || 1)
+        if (this.listQuery.page > maxPage) {
+          this.listQuery.page = maxPage
+          if (this.listTotal > 0) {
+            await this.getList()
+            return
+          }
+        }
         await this.processUpdateData()
-        this.list = this.applyListFilters(this.list)
         await updateRuningState()
         this.loadSyncStatuses()
       } catch (err) {
         console.error('[browser] getList failed:', err)
         this.list = this.list || []
+        this.listTotal = this.listTotal || 0
         this.$message.error((err && err.message) || '加载浏览器列表失败')
       } finally {
         this.listLoading = false
@@ -1439,8 +1424,9 @@ export default {
       }
     },
     async loadSyncStatuses() {
+      const rows = this.list || []
       await Promise.all(
-        this.list.map(async row => {
+        rows.map(async row => {
           this.$set(row, 'syncLoading', true)
           try {
             const status = await getProfileSyncStatus(String(row.id))
@@ -1535,7 +1521,7 @@ export default {
       if ((this.listLoading || this.batchBusy) && (!selection || selection.length === 0)) {
         return
       }
-      const pageIds = new Set((this.pagedList || []).map(r => String(r.id)))
+      const pageIds = new Set((this.list || []).map(r => String(r.id)))
       // 先清掉当前页旧勾选，再写入本次 selection（避免翻页/刷新丢其它页勾选）
       Object.keys(this.selectedIdSet).forEach(id => {
         if (pageIds.has(id)) {
@@ -1549,8 +1535,18 @@ export default {
     },
     syncSelectedRowsFromList() {
       const ids = this.selectedIdSet
-      const full = this.list || []
-      this.selectedRows = full.filter(row => ids[String(row.id)])
+      const byId = new Map()
+      for (const row of this.selectedRows || []) {
+        if (ids[String(row.id)]) {
+          byId.set(String(row.id), row)
+        }
+      }
+      for (const row of this.list || []) {
+        if (ids[String(row.id)]) {
+          byId.set(String(row.id), row)
+        }
+      }
+      this.selectedRows = Array.from(byId.values())
     },
     restoreTableSelection() {
       const table = this.$refs.browserTable
@@ -1559,19 +1555,16 @@ export default {
         return
       }
       this.ignoreSelectionChange = true
-      try {
-        table.clearSelection()
-        ;(this.pagedList || []).forEach(row => {
-          if (this.selectedIdSet[String(row.id)]) {
-            table.toggleRowSelection(row, true)
-          }
-        })
-        this.syncSelectedRowsFromList()
-      } finally {
-        this.$nextTick(() => {
-          this.ignoreSelectionChange = false
-        })
-      }
+      table.clearSelection()
+      ;(this.list || []).forEach(row => {
+        if (this.selectedIdSet[String(row.id)]) {
+          table.toggleRowSelection(row, true)
+        }
+      })
+      this.syncSelectedRowsFromList()
+      this.$nextTick(() => {
+        this.ignoreSelectionChange = false
+      })
     },
     clearTableSelection() {
       this.selectedIdSet = {}
@@ -2136,6 +2129,7 @@ export default {
       this.$set(row, 'runLoading', true)
       // spawn 很快；站点云拉取已从启动路径移除，60s 足够
       try {
+        await ensureEnvInBridge(id)
         const ret = await chromeSendTimeout('launchBrowser', 60000, id)
         this.$set(row, 'runLoading', false)
         this.$set(row, 'isRunning', true)
@@ -2228,16 +2222,15 @@ export default {
             .map(item => (item && item.group != null ? String(item.group).trim() : ''))
             .filter(Boolean)
           await this.ensureGroupsExist(groupNames)
-          for (let i = 0; i < json.length; i++) {
-            const item = this.normalizeImportItem(json[i])
-            await addBrowser(item)
-          }
+          const items = json.map(item => this.normalizeImportItem(item))
+          const { created } = await batchAddBrowsers(items, this.$t('browser.browser'))
+          const count = (created && created.length) || items.length
 
           await this.reloadGroupList()
           await this.getList()
           this.$notify({
             title: this.$t('browser.success'),
-            message: `导入${json.length}条数据`,
+            message: `导入${count}条数据`,
             type: 'success',
             duration: 3000
           })
@@ -2632,15 +2625,7 @@ export default {
       // 已能自动推导自建 URL，不再强制弹设置窗
     },
     async searchList() {
-      this.ignoreSelectionChange = true
-      try {
-        const fullList = await getBrowserList()
-        this.list = this.applyListFilters(fullList)
-      } catch (error) {
-        console.error('Search failed:', error)
-      } finally {
-        this.$nextTick(() => this.restoreTableSelection())
-      }
+      await this.getList()
     },
     handleBatchSetGroup() {
       if (this.selectedRows.length === 0) {

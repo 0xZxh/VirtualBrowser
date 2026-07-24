@@ -83,6 +83,34 @@ export class EnvironmentsService {
     return records.map(toBrowserItem)
   }
 
+  async listPage(
+    user: UserRecord,
+    query: { page?: number; limit?: number; group?: string; q?: string }
+  ): Promise<{ items: BrowserEnvironmentItem[]; total: number }> {
+    const page = Math.max(1, Number(query.page) || 1)
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
+    const group = query.group != null ? String(query.group).trim() : ''
+    const q = query.q != null ? String(query.q).trim() : ''
+
+    const filter = {
+      ...(this.isAdmin(user) ? { tenantId: user.tenantId } : { ownerId: user.id }),
+      ...(group ? { group } : {}),
+      ...(q ? { q } : {})
+    }
+
+    const [records, total] = await Promise.all([
+      this.envRepository.findPage(filter, { skip: (page - 1) * limit, limit }),
+      this.envRepository.count(filter)
+    ])
+
+    return { items: records.map(toBrowserItem), total }
+  }
+
+  async getOne(user: UserRecord, envId: string): Promise<BrowserEnvironmentItem> {
+    const record = await this.assertCanAccess(user, envId)
+    return toBrowserItem(record)
+  }
+
   async assertCanAccess(user: UserRecord, envId: string): Promise<EnvironmentRecord> {
     const record = await this.envRepository.findByEnvIdAndTenant(envId, user.tenantId)
     if (!record) {
@@ -101,16 +129,20 @@ export class EnvironmentsService {
   }
 
   private async nextEnvId(tenantId: string): Promise<string> {
-    const records = await this.envRepository.findByTenant(tenantId)
-    const max = records.reduce((acc, item) => {
-      const n = parseInt(item.envId, 10)
-      return Number.isFinite(n) ? Math.max(acc, n) : acc
-    }, 0)
+    const max = await this.envRepository.getMaxEnvId(tenantId)
     return String(max + 1)
   }
 
   async create(user: UserRecord, item: BrowserEnvironmentItem): Promise<BrowserEnvironmentItem> {
     const envId = await this.nextEnvId(user.tenantId)
+    return this.createWithEnvId(user, item, envId)
+  }
+
+  private async createWithEnvId(
+    user: UserRecord,
+    item: BrowserEnvironmentItem,
+    envId: string
+  ): Promise<BrowserEnvironmentItem> {
     const prepared = withEnvironmentDefaults(item || {})
     const groupItem = this.ensureGroup(prepared.group)
     prepared.group = groupItem.name
@@ -186,8 +218,10 @@ export class EnvironmentsService {
     items: BrowserEnvironmentItem[]
   ): Promise<{ created: BrowserEnvironmentItem[] }> {
     const created: BrowserEnvironmentItem[] = []
+    let nextId = (await this.envRepository.getMaxEnvId(user.tenantId)) + 1
     for (const item of items || []) {
-      created.push(await this.create(user, item || {}))
+      const envId = String(nextId++)
+      created.push(await this.createWithEnvId(user, item || {}, envId))
     }
     return { created }
   }

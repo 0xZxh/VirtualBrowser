@@ -6,6 +6,7 @@ import {
   batchUpdateEnvironmentGroup,
   createEnvironment,
   deleteEnvironment,
+  fetchEnvironment,
   fetchEnvironments,
   importEnvironments,
   updateEnvironment
@@ -180,34 +181,99 @@ function normalizeBrowserList(list) {
   return asBrowserListArray(list).map(normalizeEnvironmentItem)
 }
 
+function readLocalBridgeList() {
+  try {
+    const cached = JSON.parse(localStorage.getItem('list'))
+    return asBrowserListArray(cached)
+  } catch {
+    return []
+  }
+}
+
 async function syncListToBridge(list) {
-  const data = { users: list }
+  const data = { users: normalizeBrowserList(list) }
   localStorage.setItem('list', JSON.stringify(data))
   // 多环境写 virtual.dat 可能超过默认 2s；失败必须抛出，避免 UI 假成功
   await chromeSendTimeout('setBrowserList', 30000, data)
 }
 
-async function fetchListFromBackend() {
-  const res = await fetchEnvironments()
-  return normalizeBrowserList(res.data || [])
+/** Upsert items into local bridge cache by id (does not drop unknown ids). */
+export async function mergeSyncToBridge(items) {
+  const incoming = normalizeBrowserList(items)
+  if (!incoming.length) {
+    return readLocalBridgeList()
+  }
+  const byId = new Map()
+  for (const item of readLocalBridgeList()) {
+    byId.set(String(item.id), item)
+  }
+  for (const item of incoming) {
+    byId.set(String(item.id), item)
+  }
+  const merged = Array.from(byId.values())
+  await syncListToBridge(merged)
+  return merged
+}
+
+function removeIdsFromBridge(ids) {
+  const idSet = new Set((ids || []).map(id => String(id)))
+  return readLocalBridgeList().filter(item => !idSet.has(String(item.id)))
+}
+
+function parsePagePayload(data) {
+  if (Array.isArray(data)) {
+    return { items: normalizeBrowserList(data), total: data.length }
+  }
+  if (data && typeof data === 'object') {
+    const items = normalizeBrowserList(data.items || [])
+    const total = Number.isFinite(Number(data.total)) ? Number(data.total) : items.length
+    return { items, total }
+  }
+  return { items: [], total: 0 }
+}
+
+async function fetchPageFromBackend(query = {}) {
+  const page = Math.max(1, Number(query.page) || 1)
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
+  const params = { page, limit }
+  if (query.group) params.group = query.group
+  if (query.q) params.q = query.q
+  const res = await fetchEnvironments(params)
+  return parsePagePayload(res.data)
+}
+
+/** Fetch all pages (for group/admin helpers that still need full set). */
+async function fetchAllFromBackend() {
+  const pageSize = 100
+  let page = 1
+  let total = Infinity
+  const all = []
+  while (all.length < total) {
+    const chunk = await fetchPageFromBackend({ page, limit: pageSize })
+    total = chunk.total
+    all.push(...chunk.items)
+    if (!chunk.items.length) break
+    page += 1
+    if (page > 10000) break
+  }
+  return all
 }
 
 let legacyMigrateDone = false
 
-async function maybeMigrateLegacyEnvironments(backendList) {
-  if (legacyMigrateDone || backendList.length > 0) {
-    return backendList
+async function maybeMigrateLegacyEnvironments(pageResult) {
+  if (legacyMigrateDone || (pageResult && pageResult.total > 0)) {
+    return pageResult
   }
 
   const roles = require('@/store').default.getters.roles || []
   if (!roles.includes('admin')) {
-    return backendList
+    return pageResult
   }
 
   let localItems = []
   try {
-    const cached = JSON.parse(localStorage.getItem('list'))
-    localItems = (cached && cached.users) || []
+    localItems = readLocalBridgeList()
   } catch {
     //
   }
@@ -222,7 +288,7 @@ async function maybeMigrateLegacyEnvironments(backendList) {
   }
 
   if (!localItems.length) {
-    return backendList
+    return pageResult
   }
 
   try {
@@ -231,13 +297,13 @@ async function maybeMigrateLegacyEnvironments(backendList) {
     if (imported > 0) {
       console.info(`[native] legacy 环境已导入 backend: ${imported} 条`)
       legacyMigrateDone = true
-      return fetchListFromBackend()
+      return fetchPageFromBackend({ page: 1, limit: 20 })
     }
   } catch (err) {
     console.warn('[native] legacy 环境导入失败', err)
   }
 
-  return backendList
+  return pageResult
 }
 
 /** 登出时清空本机环境缓存，避免下一用户看到他人列表 */
@@ -247,12 +313,44 @@ export async function clearBrowserListCache() {
   await chromeSend('setBrowserList', { users: [] }).catch(() => {})
 }
 
+/** Server-side page for browser list UI. */
+export async function getBrowserListPage(query = {}) {
+  if (!getToken()) {
+    const all = await getBrowserList()
+    let next = all.slice()
+    const group = query.group != null ? String(query.group).trim() : ''
+    const q = query.q != null ? String(query.q).trim() : ''
+    if (group) {
+      next = next.filter(item => item.group === group)
+    }
+    if (q) {
+      const lower = q.toLowerCase()
+      next = next.filter(item => {
+        const name = String(item.name == null ? '' : item.name).toLowerCase()
+        const id = String(item.id == null ? '' : item.id)
+        return id === q || id.toLowerCase() === lower || name.includes(lower) || id.toLowerCase().includes(lower)
+      })
+    }
+    const page = Math.max(1, Number(query.page) || 1)
+    const limit = Math.max(1, Number(query.limit) || 20)
+    const start = (page - 1) * limit
+    const items = next.slice(start, start + limit)
+    await mergeSyncToBridge(items)
+    return { items, total: next.length }
+  }
+
+  let result = await fetchPageFromBackend(query)
+  if ((Number(query.page) || 1) === 1 && !query.group && !query.q) {
+    result = await maybeMigrateLegacyEnvironments(result)
+  }
+  await mergeSyncToBridge(result.items)
+  return result
+}
+
 export async function getBrowserList() {
   if (getToken()) {
-    let list = await fetchListFromBackend()
-    list = await maybeMigrateLegacyEnvironments(list)
-    list = normalizeBrowserList(list)
-    await syncListToBridge(list)
+    const list = await fetchAllFromBackend()
+    await mergeSyncToBridge(list)
     return list
   }
 
@@ -274,6 +372,25 @@ export async function getBrowserList() {
 
   return normalizeBrowserList(list)
 }
+
+/** Ensure env config exists in local bridge before launch. */
+export async function ensureEnvInBridge(envId) {
+  const id = String(envId)
+  const local = readLocalBridgeList()
+  if (local.some(item => String(item.id) === id)) {
+    return
+  }
+  if (!getToken()) {
+    throw new Error('本地缓存中不存在该环境，无法启动')
+  }
+  const res = await fetchEnvironment(id)
+  const item = res && res.data
+  if (!item) {
+    throw new Error('环境不存在')
+  }
+  await mergeSyncToBridge([item])
+}
+
 export async function addBrowser(item, defaultName) {
   if (getToken()) {
     const prefix = defaultName ? defaultName + ' ' : ''
@@ -281,11 +398,13 @@ export async function addBrowser(item, defaultName) {
       item.name = prefix + (item.id || 'new')
     }
     const res = await createEnvironment(item)
-    const envId = String((res.data && res.data.id) || item.id)
+    const created = res.data
+    const envId = String((created && created.id) || item.id)
     await syncEnvCrxBindings(envId, item.crxIds || []).catch(console.warn)
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
-    return
+    if (created) {
+      await mergeSyncToBridge([created])
+    }
+    return created
   }
 
   const prefix = defaultName ? defaultName + ' ' : ''
@@ -300,14 +419,15 @@ export async function addBrowser(item, defaultName) {
   localStorage.setItem('list', JSON.stringify(data))
   await chromeSendTimeout('setBrowserList', 30000, data)
   await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
+  return item
 }
 export async function updateBrowser(item) {
   if (getToken()) {
-    await updateEnvironment(String(item.id), item)
+    const res = await updateEnvironment(String(item.id), item)
     await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
-    return
+    const updated = (res && res.data) || item
+    await mergeSyncToBridge([updated])
+    return updated
   }
 
   const list = await getBrowserList()
@@ -323,8 +443,7 @@ export async function deleteBrowser(id) {
   if (getToken()) {
     await deleteEnvironment(String(id))
     await chromeSend('deleteBrowser', id).catch(() => {})
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
+    await syncListToBridge(removeIdsFromBridge([id]))
     return
   }
 
@@ -339,6 +458,8 @@ export async function deleteBrowser(id) {
   localStorage.setItem('list', JSON.stringify(data))
   await chromeSendTimeout('setBrowserList', 30000, data)
 }
+
+const IMPORT_BATCH_SIZE = 80
 
 export async function batchAddBrowsers(items, defaultName) {
   const listItems = Array.isArray(items) ? items : []
@@ -355,15 +476,19 @@ export async function batchAddBrowsers(items, defaultName) {
       }
       return next
     })
-    const res = await batchCreateEnvironments(payload)
-    const created = (res && res.data && res.data.created) || []
-    for (let i = 0; i < created.length; i++) {
-      const env = created[i]
-      const src = listItems[i] || {}
-      await syncEnvCrxBindings(String(env.id), src.crxIds || []).catch(console.warn)
+    const created = []
+    for (let i = 0; i < payload.length; i += IMPORT_BATCH_SIZE) {
+      const chunk = payload.slice(i, i + IMPORT_BATCH_SIZE)
+      const res = await batchCreateEnvironments(chunk)
+      const part = (res && res.data && res.data.created) || []
+      created.push(...part)
+      for (let j = 0; j < part.length; j++) {
+        const env = part[j]
+        const src = listItems[i + j] || {}
+        await syncEnvCrxBindings(String(env.id), src.crxIds || []).catch(console.warn)
+      }
+      await mergeSyncToBridge(part)
     }
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
     return { created }
   }
 
@@ -397,8 +522,7 @@ export async function batchDeleteBrowsers(ids) {
     for (const id of result.deleted || []) {
       await chromeSend('deleteBrowser', id).catch(() => {})
     }
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
+    await syncListToBridge(removeIdsFromBridge(result.deleted || []))
     return result
   }
 
@@ -435,8 +559,9 @@ export async function batchSetBrowserGroup(ids, group) {
   if (getToken()) {
     const res = await batchUpdateEnvironmentGroup(idList, nextGroup)
     const result = (res && res.data) || { updated: [], failed: [] }
-    const list = await fetchListFromBackend()
-    await syncListToBridge(list)
+    if (result.updated && result.updated.length) {
+      await mergeSyncToBridge(result.updated)
+    }
     return result
   }
 

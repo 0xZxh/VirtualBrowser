@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards
 } from '@nestjs/common'
@@ -22,8 +23,26 @@ export class EnvironmentsController {
   constructor(private environmentsService: EnvironmentsService) {}
 
   @Get()
-  async list(@Req() req: { user: UserRecord }) {
-    const data = await this.environmentsService.listForUser(req.user)
+  async list(
+    @Req() req: { user: UserRecord },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('group') group?: string,
+    @Query('q') q?: string
+  ) {
+    // Always return paginated shape for list UI; defaults page=1 limit=20
+    const data = await this.environmentsService.listPage(req.user, {
+      page: page != null && page !== '' ? Number(page) : 1,
+      limit: limit != null && limit !== '' ? Number(limit) : 20,
+      group,
+      q
+    })
+    return { code: 0, data }
+  }
+
+  @Get(':envId')
+  async getOne(@Param('envId') envId: string, @Req() req: { user: UserRecord }) {
+    const data = await this.environmentsService.getOne(req.user, envId)
     return { code: 0, data }
   }
 

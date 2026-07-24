@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common'
 import { EnvironmentRecord } from '../../../environments/environment.types'
-import { EnvironmentRepository } from '../../interfaces/environment.repository'
+import {
+  EnvironmentListFilter,
+  EnvironmentPageOptions,
+  EnvironmentRepository
+} from '../../interfaces/environment.repository'
 import { SqliteDatabaseService } from './sqlite-database.service'
 
 interface EnvironmentRow {
@@ -48,6 +52,42 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
       .prepare('SELECT * FROM environments WHERE env_id = ? AND tenant_id = ?')
       .get(envId, tenantId) as EnvironmentRow | undefined
     return row ? this.mapRow(row) : null
+  }
+
+  async findPage(
+    filter: EnvironmentListFilter,
+    options: EnvironmentPageOptions
+  ): Promise<EnvironmentRecord[]> {
+    const { sql, params } = this.buildWhere(filter)
+    const skip = Math.max(0, options.skip || 0)
+    const limit = Math.max(1, options.limit || 20)
+    const rows = this.sqlite
+      .getDb()
+      .prepare(
+        `SELECT * FROM environments ${sql} ORDER BY CAST(env_id AS INTEGER) ASC, env_id ASC LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit, skip) as EnvironmentRow[]
+    return rows.map(row => this.mapRow(row))
+  }
+
+  async count(filter: EnvironmentListFilter): Promise<number> {
+    const { sql, params } = this.buildWhere(filter)
+    const row = this.sqlite
+      .getDb()
+      .prepare(`SELECT COUNT(*) AS c FROM environments ${sql}`)
+      .get(...params) as { c: number }
+    return Number(row?.c) || 0
+  }
+
+  async getMaxEnvId(tenantId: string): Promise<number> {
+    const row = this.sqlite
+      .getDb()
+      .prepare(
+        `SELECT MAX(CAST(env_id AS INTEGER)) AS maxId FROM environments WHERE tenant_id = ?`
+      )
+      .get(tenantId) as { maxId: number | null } | undefined
+    const max = row?.maxId
+    return Number.isFinite(max as number) ? Number(max) : 0
   }
 
   async create(record: EnvironmentRecord): Promise<EnvironmentRecord> {
@@ -106,6 +146,33 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
   async delete(envId: string): Promise<boolean> {
     const result = this.sqlite.getDb().prepare('DELETE FROM environments WHERE env_id = ?').run(envId)
     return result.changes > 0
+  }
+
+  private buildWhere(filter: EnvironmentListFilter): { sql: string; params: unknown[] } {
+    const parts: string[] = []
+    const params: unknown[] = []
+    if (filter.tenantId) {
+      parts.push('tenant_id = ?')
+      params.push(filter.tenantId)
+    }
+    if (filter.ownerId) {
+      parts.push('owner_id = ?')
+      params.push(filter.ownerId)
+    }
+    if (filter.group) {
+      parts.push('group_name = ?')
+      params.push(filter.group)
+    }
+    const q = filter.q != null ? String(filter.q).trim() : ''
+    if (q) {
+      parts.push('(name LIKE ? OR env_id LIKE ?)')
+      const like = `%${q}%`
+      params.push(like, like)
+    }
+    return {
+      sql: parts.length ? `WHERE ${parts.join(' AND ')}` : '',
+      params
+    }
   }
 
   private mapRow(row: EnvironmentRow): EnvironmentRecord {
