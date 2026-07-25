@@ -205,6 +205,57 @@ export class EnvironmentsService {
     return toBrowserItem(updated)
   }
 
+  /**
+   * Merge siteSnapshot.jddj (or full siteSnapshot patch) into environment payload.
+   * Body: { jddj?: object, siteSnapshot?: object }
+   */
+  async updateSiteSnapshot(
+    user: UserRecord,
+    envId: string,
+    body: { jddj?: Record<string, unknown>; siteSnapshot?: Record<string, unknown> }
+  ): Promise<BrowserEnvironmentItem> {
+    const current = await this.assertCanAccess(user, envId)
+
+    if (!this.isAdmin(user) && current.ownerId !== user.id) {
+      throw new ForbiddenException({ code: 403, message: '无权修改该环境', envId })
+    }
+
+    const currentItem = toBrowserItem(current)
+    const prevSnap =
+      currentItem.siteSnapshot && typeof currentItem.siteSnapshot === 'object'
+        ? { ...(currentItem.siteSnapshot as Record<string, unknown>) }
+        : {}
+
+    let nextSnap: Record<string, unknown> = { ...prevSnap }
+    if (body && body.siteSnapshot && typeof body.siteSnapshot === 'object') {
+      nextSnap = { ...nextSnap, ...body.siteSnapshot }
+    }
+    if (body && body.jddj && typeof body.jddj === 'object') {
+      const prevJddj =
+        nextSnap.jddj && typeof nextSnap.jddj === 'object'
+          ? { ...(nextSnap.jddj as Record<string, unknown>) }
+          : {}
+      nextSnap.jddj = { ...prevJddj, ...body.jddj }
+    }
+
+    return this.update(user, envId, {
+      ...currentItem,
+      siteSnapshot: nextSnap
+    })
+  }
+
+  async getSiteSnapshot(
+    user: UserRecord,
+    envId: string
+  ): Promise<{ siteSnapshot: Record<string, unknown> }> {
+    const item = await this.getOne(user, envId)
+    const snap =
+      item.siteSnapshot && typeof item.siteSnapshot === 'object'
+        ? (item.siteSnapshot as Record<string, unknown>)
+        : {}
+    return { siteSnapshot: snap }
+  }
+
   async remove(user: UserRecord, envId: string): Promise<void> {
     await this.assertCanAccess(user, envId)
     const ok = await this.envRepository.delete(envId)

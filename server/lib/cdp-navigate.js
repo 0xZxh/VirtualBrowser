@@ -304,12 +304,359 @@ async function injectCookies(port, cookies, timeoutMs = 15000) {
   return { ok, fail, errors }
 }
 
+/**
+ * Pick a page target; prefer URL matching preferUrlRe if provided.
+ */
+async function pickPageTarget(port, preferUrlRe) {
+  const targets = await listTargets(port)
+  const pages = targets.filter(t => t.type === 'page')
+  if (!pages.length) return null
+  if (preferUrlRe) {
+    const hit = pages.find(p => preferUrlRe.test(String(p.url || '')))
+    if (hit) return hit
+  }
+  return (
+    pages.find(p => /virtual-worker|about:blank/i.test(String(p.url || ''))) ||
+    pages[0]
+  )
+}
+
+/**
+ * Convert CDP Network.Cookie → local cookie field shape.
+ */
+function fromCdpCookie(cookie) {
+  if (!cookie || typeof cookie !== 'object') return null
+  const out = {
+    name: cookie.name,
+    value: cookie.value,
+    domain: cookie.domain || '',
+    path: cookie.path || '/',
+    secure: !!cookie.secure,
+    httpOnly: !!cookie.httpOnly,
+    session: cookie.session != null ? !!cookie.session : !(cookie.expires > 0),
+    sameSite: cookie.sameSite || ''
+  }
+  if (cookie.expires != null && Number(cookie.expires) > 0) {
+    out.expires = Number(cookie.expires)
+    out.expirationDate = Number(cookie.expires)
+  }
+  return out
+}
+
+/**
+ * Network.getAllCookies on a page target.
+ * @returns {Promise<{ cookies: object[], raw: object[] }>}
+ */
+async function getAllCookies(port, timeoutMs = 15000) {
+  await waitForCdpReady(port, timeoutMs)
+  const preferred = await pickPageTarget(port)
+  if (!preferred || !preferred.webSocketDebuggerUrl) {
+    throw new Error('CDP: no page target for Network.getAllCookies')
+  }
+  const session = await openCdpSession(preferred.webSocketDebuggerUrl, timeoutMs + 5000)
+  try {
+    await session.send('Network.enable', {}, 8000).catch(() => {})
+    const result = await session.send('Network.getAllCookies', {}, timeoutMs)
+    const raw = (result && result.cookies) || []
+    const cookies = raw.map(fromCdpCookie).filter(Boolean)
+    return { cookies, raw }
+  } finally {
+    session.close()
+  }
+}
+
+/**
+ * Long-lived CDP WebSocket for multi-command + event listening.
+ */
+function openCdpSession(wsUrl, idleTimeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(wsUrl)
+    const key = crypto.randomBytes(16).toString('base64')
+    let socket = null
+    let buffer = Buffer.alloc(0)
+    let nextId = 1
+    const pending = new Map()
+    const eventHandlers = new Map()
+    let closed = false
+    let idleTimer = null
+
+    function resetIdle() {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        failAll(new Error('CDP session idle timeout'))
+        close()
+      }, idleTimeoutMs)
+    }
+
+    function close() {
+      if (closed) return
+      closed = true
+      if (idleTimer) clearTimeout(idleTimer)
+      if (socket) {
+        socket.removeAllListeners()
+        try {
+          socket.destroy()
+        } catch {
+          //
+        }
+      }
+    }
+
+    function failAll(err) {
+      for (const [, p] of pending) {
+        p.reject(err)
+      }
+      pending.clear()
+    }
+
+    function onData(chunk) {
+      resetIdle()
+      buffer = Buffer.concat([buffer, chunk])
+      while (buffer.length >= 2) {
+        const second = buffer[1]
+        const masked = (second & 0x80) !== 0
+        let len = second & 0x7f
+        let offset = 2
+        if (len === 126) {
+          if (buffer.length < 4) return
+          len = buffer.readUInt16BE(2)
+          offset = 4
+        } else if (len === 127) {
+          if (buffer.length < 10) return
+          len = Number(buffer.readBigUInt64BE(2))
+          offset = 10
+        }
+        const maskLen = masked ? 4 : 0
+        if (buffer.length < offset + maskLen + len) return
+        let payload = buffer.slice(offset + maskLen, offset + maskLen + len)
+        if (masked) {
+          const mask = buffer.slice(offset, offset + 4)
+          const out = Buffer.alloc(len)
+          for (let i = 0; i < len; i++) out[i] = payload[i] ^ mask[i % 4]
+          payload = out
+        }
+        buffer = buffer.slice(offset + maskLen + len)
+        try {
+          const msg = JSON.parse(payload.toString('utf8'))
+          if (msg.id != null && pending.has(msg.id)) {
+            const p = pending.get(msg.id)
+            pending.delete(msg.id)
+            if (msg.error) p.reject(new Error(msg.error.message || 'CDP error'))
+            else p.resolve(msg.result)
+          } else if (msg.method) {
+            const handlers = eventHandlers.get(msg.method) || []
+            for (const h of handlers) {
+              try {
+                h(msg.params || {})
+              } catch {
+                //
+              }
+            }
+          }
+        } catch {
+          //
+        }
+      }
+    }
+
+    const req = http.request({
+      hostname: u.hostname,
+      port: u.port || 80,
+      path: u.pathname + u.search,
+      method: 'GET',
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': key
+      }
+    })
+
+    req.on('upgrade', (_res, sock) => {
+      socket = sock
+      socket.on('data', onData)
+      socket.on('error', err => {
+        failAll(err)
+        close()
+      })
+      socket.on('close', () => {
+        failAll(new Error('CDP session closed'))
+        close()
+      })
+      resetIdle()
+      resolve({
+        send(method, params = {}, timeoutMs = 15000) {
+          if (closed || !socket) {
+            return Promise.reject(new Error('CDP session closed'))
+          }
+          const id = nextId++
+          return new Promise((res, rej) => {
+            const timer = setTimeout(() => {
+              pending.delete(id)
+              rej(new Error(`CDP ${method} timeout`))
+            }, timeoutMs)
+            pending.set(id, {
+              resolve(v) {
+                clearTimeout(timer)
+                res(v)
+              },
+              reject(e) {
+                clearTimeout(timer)
+                rej(e)
+              }
+            })
+            sendWsTextFrame(socket, JSON.stringify({ id, method, params }))
+            resetIdle()
+          })
+        },
+        on(method, handler) {
+          if (!eventHandlers.has(method)) eventHandlers.set(method, [])
+          eventHandlers.get(method).push(handler)
+          return () => {
+            const list = eventHandlers.get(method) || []
+            const idx = list.indexOf(handler)
+            if (idx >= 0) list.splice(idx, 1)
+          }
+        },
+        close
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+function matchUrlPatterns(url, patterns) {
+  const list = Array.isArray(patterns) ? patterns : []
+  if (!list.length) return true
+  const s = String(url || '')
+  return list.some(p => {
+    if (!p) return false
+    if (p instanceof RegExp) return p.test(s)
+    return s.includes(String(p))
+  })
+}
+
+/**
+ * Enable Network domain and collect response bodies matching urlPatterns.
+ * Optionally navigates to navigateUrl first.
+ *
+ * @param {number} port
+ * @param {{
+ *   urlPatterns?: Array<string|RegExp>,
+ *   navigateUrl?: string,
+ *   collectMs?: number,
+ *   preferUrlRe?: RegExp,
+ *   maxBodies?: number
+ * }} [options]
+ * @returns {Promise<{ bodies: Array<{ url: string, status: number, mimeType: string, body: string }>, pageUrl: string|null }>}
+ */
+async function collectNetworkResponses(port, options = {}) {
+  const collectMs = options.collectMs != null ? Number(options.collectMs) : 12000
+  const maxBodies = options.maxBodies != null ? Number(options.maxBodies) : 40
+  await waitForCdpReady(port, 15000)
+  const preferred = await pickPageTarget(port, options.preferUrlRe)
+  if (!preferred || !preferred.webSocketDebuggerUrl) {
+    throw new Error('CDP: no page target for network intercept')
+  }
+
+  const session = await openCdpSession(preferred.webSocketDebuggerUrl, collectMs + 30000)
+  const bodies = []
+  const seen = new Set()
+  const pendingFetch = new Set()
+
+  try {
+    await session.send('Network.enable', {})
+    await session.send('Page.enable', {}).catch(() => {})
+
+    session.on('Network.responseReceived', params => {
+      const response = params && params.response
+      const requestId = params && params.requestId
+      if (!response || !requestId) return
+      if (!matchUrlPatterns(response.url, options.urlPatterns)) return
+      if (seen.has(requestId) || bodies.length + pendingFetch.size >= maxBodies) return
+      seen.add(requestId)
+      pendingFetch.add(requestId)
+      // slight delay so body is available
+      setTimeout(() => {
+        session
+          .send('Network.getResponseBody', { requestId }, 8000)
+          .then(result => {
+            const body =
+              result && result.base64Encoded
+                ? Buffer.from(result.body || '', 'base64').toString('utf8')
+                : String((result && result.body) || '')
+            bodies.push({
+              url: response.url,
+              status: response.status || 0,
+              mimeType: response.mimeType || '',
+              body
+            })
+          })
+          .catch(() => {})
+          .finally(() => pendingFetch.delete(requestId))
+      }, 200)
+    })
+
+    if (options.navigateUrl) {
+      await session.send('Page.navigate', { url: options.navigateUrl })
+    }
+
+    const started = Date.now()
+    while (Date.now() - started < collectMs) {
+      if (bodies.length >= maxBodies && pendingFetch.size === 0) break
+      await sleep(300)
+    }
+    // drain in-flight body fetches briefly
+    const drainUntil = Date.now() + 2000
+    while (pendingFetch.size > 0 && Date.now() < drainUntil) {
+      await sleep(100)
+    }
+
+    return { bodies, pageUrl: preferred.url || null }
+  } finally {
+    session.close()
+  }
+}
+
+/**
+ * Runtime.evaluate on preferred page (url match first).
+ */
+async function cdpEvaluateOn(port, expression, options = {}) {
+  const timeoutMs = options.timeoutMs != null ? options.timeoutMs : 15000
+  await waitForCdpReady(port, timeoutMs)
+  const preferred = await pickPageTarget(port, options.preferUrlRe)
+  if (!preferred || !preferred.webSocketDebuggerUrl) {
+    throw new Error('CDP: no page target for Runtime.evaluate')
+  }
+  const result = await cdpWsSend(preferred.webSocketDebuggerUrl, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true
+  })
+  if (result && result.exceptionDetails) {
+    const msg =
+      (result.exceptionDetails.exception && result.exceptionDetails.exception.description) ||
+      result.exceptionDetails.text ||
+      'evaluate exception'
+    throw new Error(msg)
+  }
+  return result && result.result ? result.result.value : undefined
+}
+
 module.exports = {
   waitForCdpReady,
   listTargets,
   navigateToUrl,
   cdpWsSend,
   cdpEvaluate,
+  cdpEvaluateOn,
   toCdpCookieParams,
-  injectCookies
+  fromCdpCookie,
+  injectCookies,
+  getAllCookies,
+  pickPageTarget,
+  openCdpSession,
+  collectNetworkResponses,
+  matchUrlPatterns
 }

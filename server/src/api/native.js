@@ -8,8 +8,10 @@ import {
   deleteEnvironment,
   fetchEnvironment,
   fetchEnvironments,
+  fetchEnvironmentSiteSnapshot,
   importEnvironments,
-  updateEnvironment
+  updateEnvironment,
+  updateEnvironmentSiteSnapshot
 } from '@/api/environment'
 import {
   devNativeBridgeSend,
@@ -190,17 +192,30 @@ function readLocalBridgeList() {
   }
 }
 
-async function syncListToBridge(list) {
+async function syncListToBridge(list, options = {}) {
   const data = { users: normalizeBrowserList(list) }
   localStorage.setItem('list', JSON.stringify(data))
+  const syncWorkers = options.syncWorkers || 'all'
+  const opt =
+    syncWorkers === 'none'
+      ? { syncWorkers: 'none' }
+      : syncWorkers === 'ids'
+        ? { syncWorkers: 'ids', ids: options.ids || [] }
+        : { syncWorkers: 'all' }
   // 多环境写 virtual.dat 可能超过默认 2s；失败必须抛出，避免 UI 假成功
-  await chromeSendTimeout('setBrowserList', 30000, data)
+  await chromeSendTimeout('setBrowserList', 30000, data, opt)
 }
 
-/** Upsert items into local bridge cache by id (does not drop unknown ids). */
-export async function mergeSyncToBridge(items) {
+/**
+ * Upsert items into local bridge cache by id (does not drop unknown ids).
+ * @param {object[]} items
+ * @param {{ syncWorkers?: 'all'|'ids'|'none', ids?: Array<string|number> }} [options]
+ *   - list 翻页用 syncWorkers:'none'（只更新 list 缓存，启动时再写单条 virtual.dat）
+ *   - 创建/更新用 syncWorkers:'ids'（只写变更环境）
+ */
+export async function mergeSyncToBridge(items, options = {}) {
   const incoming = normalizeBrowserList(items)
-  if (!incoming.length) {
+  if (!incoming.length && options.syncWorkers !== 'none') {
     return readLocalBridgeList()
   }
   const byId = new Map()
@@ -211,7 +226,11 @@ export async function mergeSyncToBridge(items) {
     byId.set(String(item.id), item)
   }
   const merged = Array.from(byId.values())
-  await syncListToBridge(merged)
+  const syncWorkers = options.syncWorkers || 'ids'
+  const ids =
+    options.ids ||
+    (syncWorkers === 'ids' ? incoming.map(item => item.id) : undefined)
+  await syncListToBridge(merged, { syncWorkers, ids })
   return merged
 }
 
@@ -335,7 +354,7 @@ export async function getBrowserListPage(query = {}) {
     const limit = Math.max(1, Number(query.limit) || 20)
     const start = (page - 1) * limit
     const items = next.slice(start, start + limit)
-    await mergeSyncToBridge(items)
+    await mergeSyncToBridge(items, { syncWorkers: 'none' })
     return { items, total: next.length }
   }
 
@@ -343,14 +362,15 @@ export async function getBrowserListPage(query = {}) {
   if ((Number(query.page) || 1) === 1 && !query.group && !query.q) {
     result = await maybeMigrateLegacyEnvironments(result)
   }
-  await mergeSyncToBridge(result.items)
+  await mergeSyncToBridge(result.items, { syncWorkers: 'none' })
   return result
 }
 
 export async function getBrowserList() {
   if (getToken()) {
     const list = await fetchAllFromBackend()
-    await mergeSyncToBridge(list)
+    // 全量列表仅更新缓存，不写全部 virtual.dat（启动时 refreshWorkerVirtualDat）
+    await mergeSyncToBridge(list, { syncWorkers: 'none' })
     return list
   }
 
@@ -388,62 +408,115 @@ export async function ensureEnvInBridge(envId) {
   if (!item) {
     throw new Error('环境不存在')
   }
-  await mergeSyncToBridge([item])
+  await mergeSyncToBridge([item], { syncWorkers: 'ids', ids: [id] })
+}
+
+/** 表格/会话临时态，禁止写入云端 payload 或 localStorage */
+const BROWSER_UI_TRANSIENT_KEYS = [
+  'jddjLoading',
+  'jddjAutoSaving',
+  'runLoading',
+  'groupLoading',
+  'proxyLoading',
+  'deleteLoading',
+  'syncLoading',
+  'syncActionLoading',
+  'debugLoading',
+  'syncStatus'
+]
+
+export function stripBrowserUiFields(item) {
+  if (!item || typeof item !== 'object') return item
+  const out = { ...item }
+  for (const key of BROWSER_UI_TRANSIENT_KEYS) {
+    delete out[key]
+  }
+  return out
+}
+
+/** 列表加载后清掉被误持久化的 UI 脏字段，避免开关永久 disabled */
+export function scrubBrowserListUiFlags(rows) {
+  if (!Array.isArray(rows)) return rows || []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    for (const key of BROWSER_UI_TRANSIENT_KEYS) {
+      if (key === 'syncStatus') {
+        if (Object.prototype.hasOwnProperty.call(row, key)) {
+          delete row[key]
+        }
+        continue
+      }
+      if (row[key]) {
+        row[key] = false
+      }
+    }
+  }
+  return rows
 }
 
 export async function addBrowser(item, defaultName) {
+  const cleaned = stripBrowserUiFields(item) || item
   if (getToken()) {
     const prefix = defaultName ? defaultName + ' ' : ''
-    if (!item.name) {
-      item.name = prefix + (item.id || 'new')
+    if (!cleaned.name) {
+      cleaned.name = prefix + (cleaned.id || 'new')
     }
-    const res = await createEnvironment(item)
+    const res = await createEnvironment(cleaned)
     const created = res.data
-    const envId = String((created && created.id) || item.id)
-    await syncEnvCrxBindings(envId, item.crxIds || []).catch(console.warn)
+    const envId = String((created && created.id) || cleaned.id)
+    await syncEnvCrxBindings(envId, cleaned.crxIds || []).catch(console.warn)
     if (created) {
-      await mergeSyncToBridge([created])
+      await mergeSyncToBridge([created], { syncWorkers: 'ids', ids: [envId] })
     }
     return created
   }
 
   const prefix = defaultName ? defaultName + ' ' : ''
   const list = await getBrowserList()
-  const maxId = Math.max(0, Math.max(...list.map(item => item.id)))
-  item.id = maxId + 1
-  item.name = item.name || prefix + item.id
+  const maxId = Math.max(0, Math.max(...list.map(it => it.id)))
+  cleaned.id = maxId + 1
+  cleaned.name = cleaned.name || prefix + cleaned.id
 
-  list.push(item)
+  list.push(cleaned)
 
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
   await chromeSendTimeout('setBrowserList', 30000, data)
-  await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
-  return item
+  await syncEnvCrxBindings(String(cleaned.id), cleaned.crxIds || []).catch(console.warn)
+  return cleaned
 }
 export async function updateBrowser(item) {
+  const cleaned = stripBrowserUiFields(item)
   if (getToken()) {
-    const res = await updateEnvironment(String(item.id), item)
-    await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
-    const updated = (res && res.data) || item
-    await mergeSyncToBridge([updated])
+    const res = await updateEnvironment(String(cleaned.id), cleaned)
+    await syncEnvCrxBindings(String(cleaned.id), cleaned.crxIds || []).catch(console.warn)
+    const updated = stripBrowserUiFields((res && res.data) || cleaned)
+    await mergeSyncToBridge([updated], {
+      syncWorkers: 'ids',
+      ids: [String(cleaned.id)]
+    })
     return updated
   }
 
   const list = await getBrowserList()
-  const idx = list.findIndex(it => it.id === item.id)
-  list[idx] = item
+  const idx = list.findIndex(it => String(it.id) === String(cleaned.id))
+  if (idx < 0) {
+    throw new Error('本地缓存中不存在该环境，无法更新')
+  }
+  // 局部更新：与现有项合并，避免只传 autoJddj 时冲掉 cookie 等字段
+  list[idx] = stripBrowserUiFields({ ...list[idx], ...cleaned })
 
   const data = { users: list }
   localStorage.setItem('list', JSON.stringify(data))
   await chromeSendTimeout('setBrowserList', 30000, data)
-  await syncEnvCrxBindings(String(item.id), item.crxIds || []).catch(console.warn)
+  await syncEnvCrxBindings(String(cleaned.id), cleaned.crxIds || []).catch(console.warn)
+  return list[idx]
 }
 export async function deleteBrowser(id) {
   if (getToken()) {
     await deleteEnvironment(String(id))
     await chromeSend('deleteBrowser', id).catch(() => {})
-    await syncListToBridge(removeIdsFromBridge([id]))
+    await syncListToBridge(removeIdsFromBridge([id]), { syncWorkers: 'none' })
     return
   }
 
@@ -487,7 +560,10 @@ export async function batchAddBrowsers(items, defaultName) {
         const src = listItems[i + j] || {}
         await syncEnvCrxBindings(String(env.id), src.crxIds || []).catch(console.warn)
       }
-      await mergeSyncToBridge(part)
+      await mergeSyncToBridge(part, {
+        syncWorkers: 'ids',
+        ids: part.map(env => env.id)
+      })
     }
     return { created }
   }
@@ -522,7 +598,9 @@ export async function batchDeleteBrowsers(ids) {
     for (const id of result.deleted || []) {
       await chromeSend('deleteBrowser', id).catch(() => {})
     }
-    await syncListToBridge(removeIdsFromBridge(result.deleted || []))
+    await syncListToBridge(removeIdsFromBridge(result.deleted || []), {
+      syncWorkers: 'none'
+    })
     return result
   }
 
@@ -560,7 +638,10 @@ export async function batchSetBrowserGroup(ids, group) {
     const res = await batchUpdateEnvironmentGroup(idList, nextGroup)
     const result = (res && res.data) || { updated: [], failed: [] }
     if (result.updated && result.updated.length) {
-      await mergeSyncToBridge(result.updated)
+      await mergeSyncToBridge(result.updated, {
+        syncWorkers: 'ids',
+        ids: result.updated.map(env => env.id)
+      })
     }
     return result
   }
@@ -670,6 +751,56 @@ export async function getCrxEnvironments(crxId) {
 
 export async function updateCrxEnvironments(crxId, envIds) {
   return chromeSend('updateCrxEnvironments', crxId, envIds)
+}
+
+/**
+ * 后台会话保活：无头/最小化启动 → CDP 续 Cookie → 落盘并可选云上传。
+ * 超时建议 ≥ 120s（单环境会话约 90s）。
+ */
+export async function runSessionKeepalive(envId, options = {}) {
+  return chromeSendTimeout('runSessionKeepalive', 120000, envId, options)
+}
+
+/**
+ * 到家刷新：保活 + 抓取店铺名/营业状态/订单，并写入 site-snapshot。
+ */
+export async function runJddjFetch(envId, options = {}) {
+  return chromeSendTimeout('runJddjFetch', 120000, envId, options)
+}
+
+export async function getSessionQueueStats() {
+  return chromeSend('getSessionQueueStats')
+}
+
+/** 读取后端 siteSnapshot（含 jddj） */
+export async function getEnvironmentSiteSnapshot(envId) {
+  if (!getToken()) {
+    return { siteSnapshot: {} }
+  }
+  const res = await fetchEnvironmentSiteSnapshot(String(envId))
+  return (res && res.data) || { siteSnapshot: {} }
+}
+
+/**
+ * 写入 / 合并 siteSnapshot.jddj
+ * @param {string|number} envId
+ * @param {object} jddj — { shopName, businessStatus, orders, fetchedAt, ok, error }
+ */
+export async function saveEnvironmentJddjSnapshot(envId, jddj) {
+  if (!getToken()) {
+    throw new Error('未登录，无法保存到家快照')
+  }
+  const res = await updateEnvironmentSiteSnapshot(String(envId), { jddj })
+  return (res && res.data) || res
+}
+
+/** 通用 siteSnapshot 合并写入 */
+export async function saveEnvironmentSiteSnapshot(envId, data) {
+  if (!getToken()) {
+    throw new Error('未登录，无法保存站点快照')
+  }
+  const res = await updateEnvironmentSiteSnapshot(String(envId), data || {})
+  return (res && res.data) || res
 }
 
 export async function getGroupList() {

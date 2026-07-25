@@ -174,3 +174,19 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+// 退出管理端时清扫指纹内核树，避免任务管理器里残留 Virtual Browser
+app.on('before-quit', () => {
+  try {
+    if (typeof nativeRuntime.stopAllBrowsers === 'function') {
+      const result = nativeRuntime.stopAllBrowsers()
+      logDesktop('stopAllBrowsers on quit', result)
+    } else if (typeof nativeRuntime.killAllWorkerKernels === 'function') {
+      const result = nativeRuntime.killAllWorkerKernels()
+      logDesktop('killAllWorkerKernels on quit', result)
+    }
+  } catch (err) {
+    console.warn('[desktop-shell] cleanup kernels on quit failed:', err.message)
+    errorDesktop('cleanup kernels on quit failed', { error: err.message })
+  }
+})

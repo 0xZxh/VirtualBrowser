@@ -49,6 +49,51 @@ function Ensure-Command([string]$Name) {
   }
 }
 
+# robocopy: exit 0-7 = success (files copied / extra / mismatched); >=8 = failure
+function Copy-RobocopyTree {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  if (-not (Test-Path -LiteralPath $Source)) {
+    throw "Copy source missing: $Source"
+  }
+  New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+  Write-Host "robocopy /E /MT:8 => $Source -> $Destination"
+  & robocopy.exe $Source $Destination /E /MT:8 /R:2 /W:2 /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
+  $code = $LASTEXITCODE
+  if ($code -ge 8) {
+    throw "robocopy failed (exit=$code): $Source -> $Destination"
+  }
+  # Prevent $ErrorActionPreference Stop from treating robocopy 1-7 as failure later
+  $global:LASTEXITCODE = 0
+}
+
+function Get-DirSizeMB {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+  $sum = (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Measure-Object -Property Length -Sum).Sum
+  if (-not $sum) { return 0 }
+  return [math]::Round($sum / 1MB, 1)
+}
+
+function Write-StagingSizeSummary {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  $chrome = Join-Path $Root "Chrome-bin"
+  $chromeMb = Get-DirSizeMB $chrome
+  $totalMb = Get-DirSizeMB $Root
+  $otherMb = [math]::Round([math]::Max(0, $totalMb - $chromeMb), 1)
+  Write-Host ""
+  Write-Host "Staging size summary:" -ForegroundColor Cyan
+  Write-Host "  Chrome-bin : $chromeMb MB"
+  Write-Host "  Other      : $otherMb MB (Electron shell + UI + lib)"
+  Write-Host "  Total      : $totalMb MB"
+  if ($totalMb -ge 1024) {
+    Write-Warning "Staging >= 1 GB. Ensure Chrome-bin was pruned (no outer Electron shell / app.asar)."
+  }
+}
+
 Write-Step "Read client.json template"
 if (-not (Test-Path $templatePath)) {
   throw "Missing template: $templatePath"
@@ -124,7 +169,7 @@ if (-not (Test-Path $electronDist)) {
   throw "Electron dist missing; run npm install in desktop-shell"
 }
 
-Copy-Item -Path (Join-Path $electronDist "*") -Destination $stagingRoot -Recurse -Force
+Copy-RobocopyTree -Source $electronDist -Destination $stagingRoot
 Rename-Item -Path (Join-Path $stagingRoot "electron.exe") -NewName "VirtualBrowser.exe" -ErrorAction SilentlyContinue
 
 $assetsDir = Join-Path $packagingRoot "assets"
@@ -157,7 +202,19 @@ New-Item -ItemType Directory -Path (Join-Path $stagingRoot "config") -Force | Ou
 Copy-Item -Path $clientJsonPath -Destination (Join-Path $stagingRoot "config\client.json")
 
 if (Test-Path $chromeBinDir) {
-  Copy-Item -Path $chromeBinDir -Destination (Join-Path $stagingRoot "Chrome-bin") -Recurse -Force
+  $pruneScript = Join-Path $serverDir "scripts\prune-outer-shell.ps1"
+  if (Test-Path $pruneScript) {
+    Write-Step "Prune Chrome-bin outer shell (keep VirtualBrowser\146.x)"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $pruneScript
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "prune-outer-shell.ps1 exited with code $LASTEXITCODE (continuing)"
+    }
+    $global:LASTEXITCODE = 0
+  } else {
+    Write-Warning "prune-outer-shell.ps1 not found; Chrome-bin may include outer shell (~extra hundreds of MB)"
+  }
+  Write-Step "Copy Chrome-bin into staging (robocopy)"
+  Copy-RobocopyTree -Source $chromeBinDir -Destination (Join-Path $stagingRoot "Chrome-bin")
   Write-Host "Copied Chrome-bin"
 } else {
   Write-Warning "Chrome-bin/ not found; installer will lack fingerprint kernel (env launch will fail)"
@@ -304,6 +361,7 @@ finally {
 }
 
 Write-Host "staging ready: $stagingRoot"
+Write-StagingSizeSummary -Root $stagingRoot
 
 if (-not $SkipNsis) {
   Write-Step "Build NSIS installer"

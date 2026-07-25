@@ -109,7 +109,7 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="代理" width="210px" show-overflow-tooltip>
+      <el-table-column label="代理" width="140px" show-overflow-tooltip>
         <template slot-scope="{ row }">
           <span class="proxy-cell">{{ formatProxyLabel(row) }}</span>
         </template>
@@ -126,7 +126,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column :label="$t('browser.cloudSync')" width="170" align="center">
+      <el-table-column :label="$t('browser.cloudSync')" width="145" align="center">
         <template slot-scope="{ row }">
           <div v-if="row.syncLoading" v-loading="true" class="sync-loading" />
           <div v-else class="sync-cell">
@@ -135,12 +135,9 @@
                 <div>{{ formatSyncVersion(row.syncStatus) }}</div>
                 <div>{{ $t('browser.cloudSyncHint') }}</div>
               </div>
-              <div class="sync-status-block">
-                <el-tag :type="syncStatusTagType(row.syncStatus.status)" size="mini">
-                  {{ syncStatusLabel(row.syncStatus.status) }}
-                </el-tag>
-                <div class="sync-version-hint">{{ formatSyncVersion(row.syncStatus) }}</div>
-              </div>
+              <el-tag :type="syncStatusTagType(row.syncStatus.status)" size="mini">
+                {{ syncStatusLabel(row.syncStatus.status) }}
+              </el-tag>
             </el-tooltip>
             <span v-else>—</span>
             <el-dropdown
@@ -172,6 +169,43 @@
         </template>
       </el-table-column>
 
+      <el-table-column :label="$t('browser.jddjColumn')" width="240" align="center">
+        <template slot-scope="{ row }">
+          <div class="jddj-cell" :class="{ 'is-loading': row.jddjLoading }">
+            <div
+              class="jddj-summary"
+              :title="jddjSummaryTitle(row)"
+              @click="openJddjOrdersDrawer(row)"
+            >
+              <span class="jddj-shop">{{ jddjShopName(row) }}</span>
+              <span v-if="jddjHasSnapshot(row)" class="jddj-status-inline">
+                · {{ jddjBusinessStatus(row) }}
+              </span>
+            </div>
+            <div class="jddj-controls">
+              <el-tooltip :content="$t('browser.jddjAutoRefresh')" placement="top">
+                <el-switch
+                  v-permission="['admin', 'operator']"
+                  :value="isJddjAutoEnabled(row)"
+                  :disabled="!!row.jddjAutoSaving"
+                  @change="val => handleToggleJddjAuto(row, val)"
+                />
+              </el-tooltip>
+              <el-button
+                v-permission="['admin', 'operator']"
+                size="mini"
+                plain
+                :loading="row.jddjLoading"
+                :disabled="isRowBusy(row) && !row.jddjLoading"
+                @click="handleRefreshJddj(row)"
+              >
+                {{ $t('browser.jddjRefresh') }}
+              </el-button>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
+
       <el-table-column
         :label="$t('browser.launch')"
         class-name="status-col"
@@ -183,7 +217,7 @@
             type="primary"
             icon="el-icon-video-play"
             :loading="row.runLoading"
-            :disabled="row.isRunning || isRowBusy(row)"
+            :disabled="isRowBusy(row) && !row.runLoading"
             @click="handleLaunch(row)"
           >
             {{
@@ -854,12 +888,40 @@
         <el-button type="primary" @click="applyBatchSetGroup">保存</el-button>
       </span>
     </el-dialog>
+
+    <el-drawer
+      :title="$t('browser.jddjOrdersTitle')"
+      :visible.sync="jddjDrawerVisible"
+      size="480px"
+      append-to-body
+    >
+      <div v-if="jddjDrawerRow" class="jddj-drawer">
+        <div class="jddj-drawer-head">
+          <div class="jddj-shop">{{ jddjShopName(jddjDrawerRow) }}</div>
+          <div class="jddj-meta">
+            {{ jddjBusinessStatus(jddjDrawerRow) }}
+            <span v-if="jddjFetchedAt(jddjDrawerRow)">· {{ jddjFetchedAt(jddjDrawerRow) }}</span>
+          </div>
+        </div>
+        <el-table :data="jddjOrdersList(jddjDrawerRow)" size="mini" empty-text="暂无订单">
+          <el-table-column prop="orderId" :label="$t('browser.jddjOrderId')" min-width="120" />
+          <el-table-column prop="status" :label="$t('browser.jddjOrderStatus')" width="90" />
+          <el-table-column prop="amount" :label="$t('browser.jddjOrderAmount')" width="80" />
+          <el-table-column prop="createdAt" :label="$t('browser.jddjOrderTime')" width="140">
+            <template slot-scope="{ row }">
+              {{ formatJddjTime(row.createdAt) }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script>
 import {
   getBrowserListPage,
+  getBrowserList,
   getGlobalData,
   setGlobalData,
   getDefaultIpGeoApiLink,
@@ -868,6 +930,7 @@ import {
   batchDeleteBrowsers,
   batchSetBrowserGroup,
   updateBrowser,
+  scrubBrowserListUiFlags,
   deleteBrowser,
   chromeSend,
   chromeSendTimeout,
@@ -879,6 +942,7 @@ import {
   getProfileSyncStatus,
   syncProfileToCloud,
   syncProfileFromCloud,
+  runJddjFetch,
   ensureEnvInBridge
 } from '@/api/native'
 import { saveAs } from 'file-saver'
@@ -1029,6 +1093,8 @@ export default {
       listLoading: true,
       batchBusy: false,
       tableHeight: 480,
+      jddjDrawerVisible: false,
+      jddjDrawerRow: null,
       listQuery: {
         page: 1,
         limit: 20,
@@ -1359,6 +1425,7 @@ export default {
     this._runStateTimer = setInterval(() => {
       updateRuningState().catch(() => {})
     }, 3000)
+    this.startJddjSchedule()
   },
   beforeDestroy() {
     window.removeEventListener('resize', this.updateTableHeight)
@@ -1366,6 +1433,7 @@ export default {
       clearInterval(this._runStateTimer)
       this._runStateTimer = null
     }
+    this.stopJddjSchedule()
     if (typeof this._unsubBrowserExited === 'function') {
       this._unsubBrowserExited()
       this._unsubBrowserExited = null
@@ -1379,7 +1447,196 @@ export default {
     },
     isRowBusy(row) {
       if (!row) return false
-      return !!(row.deleteLoading || row.groupLoading || row.runLoading || this.batchBusy)
+      return !!(
+        row.deleteLoading ||
+        row.groupLoading ||
+        row.runLoading ||
+        row.jddjLoading ||
+        this.batchBusy
+      )
+    },
+    getJddjSnapshot(row) {
+      return (row && row.siteSnapshot && row.siteSnapshot.jddj) || null
+    },
+    jddjHasSnapshot(row) {
+      const snap = this.getJddjSnapshot(row)
+      return !!(snap && (snap.shopName || snap.businessStatus || snap.fetchedAt))
+    },
+    isJddjAutoEnabled(row) {
+      if (!row) return false
+      return !!(row.autoJddj || row.jddjAutoRefresh)
+    },
+    jddjShopName(row) {
+      const snap = this.getJddjSnapshot(row)
+      if (snap && snap.shopName) return snap.shopName
+      return this.$t('browser.jddjEmpty')
+    },
+    jddjBusinessStatus(row) {
+      const snap = this.getJddjSnapshot(row)
+      return (snap && snap.businessStatus) || ''
+    },
+    jddjFetchedAt(row) {
+      const snap = this.getJddjSnapshot(row)
+      return this.formatJddjTime(snap && snap.fetchedAt)
+    },
+    jddjSummaryTitle(row) {
+      const parts = [this.$t('browser.jddjSummaryTooltip')]
+      const status = this.jddjBusinessStatus(row)
+      const time = this.jddjFetchedAt(row)
+      if (status) parts.push(status)
+      if (time) parts.push(time)
+      return parts.join(' · ')
+    },
+    jddjOrdersList(row) {
+      const snap = this.getJddjSnapshot(row)
+      return (snap && Array.isArray(snap.orders) && snap.orders) || []
+    },
+    formatJddjTime(value) {
+      if (!value) return ''
+      const d = value instanceof Date ? value : new Date(value)
+      if (Number.isNaN(d.getTime())) return String(value)
+      const pad = n => String(n).padStart(2, '0')
+      return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(
+        d.getMinutes()
+      )}`
+    },
+    openJddjOrdersDrawer(row) {
+      this.jddjDrawerRow = row
+      this.jddjDrawerVisible = true
+    },
+    applyJddjResultToRow(row, result) {
+      if (!row || !result) return
+      const snap =
+        result.jddj ||
+        (result.siteSnapshot && result.siteSnapshot.jddj) ||
+        (result.shopName != null || result.orders != null || result.ok != null ? result : null)
+      if (!snap) return
+      const siteSnapshot = { ...(row.siteSnapshot || {}), jddj: snap }
+      this.$set(row, 'siteSnapshot', siteSnapshot)
+    },
+    async handleRefreshJddj(row, options = {}) {
+      if (!row || row.jddjLoading) return
+      const silent = !!(options && options.silent)
+      if (!silent && this.isRowBusy(row)) {
+        this.$message.warning(this.busyReasonText(row) || '当前行忙碌，请稍后再刷新店铺')
+        return
+      }
+      const envId = String(row.id)
+      this.$set(row, 'jddjLoading', true)
+      // 防止 IPC 挂死导致永久 busy、启动静默失败
+      if (this._jddjLoadingTimers && this._jddjLoadingTimers[envId]) {
+        clearTimeout(this._jddjLoadingTimers[envId])
+      }
+      if (!this._jddjLoadingTimers) this._jddjLoadingTimers = {}
+      this._jddjLoadingTimers[envId] = setTimeout(() => {
+        if (row.jddjLoading) {
+          this.$set(row, 'jddjLoading', false)
+          console.warn('[jddj] force clear jddjLoading after watchdog', envId)
+        }
+      }, 130000)
+      try {
+        await ensureEnvInBridge(envId).catch(() => {})
+        const result = await runJddjFetch(envId)
+        this.applyJddjResultToRow(row, result)
+        const snap = this.getJddjSnapshot(row)
+        if (snap && snap.ok === false) {
+          if (!silent) {
+            this.$message.warning(snap.error || this.$t('browser.jddjFetchFailed'))
+          }
+        } else if (!silent) {
+          this.$message.success(this.$t('browser.jddjFetchSuccess'))
+        }
+        try {
+          const status = await getProfileSyncStatus(envId)
+          this.$set(row, 'syncStatus', status)
+        } catch {
+          //
+        }
+      } catch (err) {
+        const raw = err && err.message ? err.message : String(err)
+        const msg =
+          raw === 'timeout' || err === 'timeout' ? this.$t('browser.jddjFetchTimeout') : raw
+        if (!silent) {
+          this.$message.error(msg)
+        } else {
+          console.warn('[jddj] schedule refresh failed', envId, msg)
+        }
+      } finally {
+        if (this._jddjLoadingTimers && this._jddjLoadingTimers[envId]) {
+          clearTimeout(this._jddjLoadingTimers[envId])
+          delete this._jddjLoadingTimers[envId]
+        }
+        this.$set(row, 'jddjLoading', false)
+      }
+    },
+    busyReasonText(row) {
+      if (!row) return ''
+      if (row.jddjLoading) return '店铺信息刷新中，请稍候再启动'
+      if (row.deleteLoading) return '正在删除该环境'
+      if (row.groupLoading) return '正在更新分组'
+      if (row.runLoading) return '正在启动中'
+      if (this.batchBusy) return '批量操作进行中，请稍候'
+      return ''
+    },
+    async handleToggleJddjAuto(row, enabled) {
+      if (!row) return
+      const next = !!enabled
+      const prevAuto = !!row.autoJddj
+      const prevRefresh = !!row.jddjAutoRefresh
+      this.$set(row, 'autoJddj', next)
+      this.$set(row, 'jddjAutoRefresh', next)
+      this.$set(row, 'jddjAutoSaving', true)
+      try {
+        // 只提交开关字段，避免整行 cookie/siteSnapshot 导致超时或污染
+        await updateBrowser({
+          id: row.id,
+          name: row.name,
+          group: row.group,
+          autoJddj: next,
+          jddjAutoRefresh: next
+        })
+      } catch (err) {
+        this.$set(row, 'autoJddj', prevAuto)
+        this.$set(row, 'jddjAutoRefresh', prevRefresh)
+        this.$message.error((err && err.message) || this.$t('browser.jddjAutoSaveFailed'))
+      } finally {
+        this.$set(row, 'jddjAutoSaving', false)
+      }
+    },
+    startJddjSchedule() {
+      this.stopJddjSchedule()
+      const ms = Number((this.GlobalData && this.GlobalData.jddjScheduleMs) || 0) || 30 * 60 * 1000
+      this._jddjScheduleTimer = setInterval(() => {
+        this.runJddjScheduleTick().catch(err => {
+          console.warn('[jddj] schedule tick error', err)
+        })
+      }, ms)
+    },
+    stopJddjSchedule() {
+      if (this._jddjScheduleTimer) {
+        clearInterval(this._jddjScheduleTimer)
+        this._jddjScheduleTimer = null
+      }
+    },
+    async runJddjScheduleTick() {
+      if (this._jddjScheduleRunning) return
+      this._jddjScheduleRunning = true
+      try {
+        let all = []
+        try {
+          all = await getBrowserList()
+        } catch {
+          all = this.list || []
+        }
+        const enabled = (all || []).filter(item => this.isJddjAutoEnabled(item))
+        for (const env of enabled) {
+          const row = (this.list || []).find(r => String(r.id) === String(env.id)) || env
+          if (row.jddjLoading) continue
+          await this.handleRefreshJddj(row, { silent: true })
+        }
+      } finally {
+        this._jddjScheduleRunning = false
+      }
     },
     async refreshList() {
       await this.getList()
@@ -1389,16 +1646,19 @@ export default {
       this.listLoading = true
       try {
         const title = this.listQuery.title != null ? String(this.listQuery.title).trim() : ''
-        const result = await getBrowserListPage({
-          page: this.listQuery.page || 1,
-          limit: this.listQuery.limit || 20,
-          group: this.listQuery.group || undefined,
-          q: title || undefined
-        })
-        this.GlobalData = await getGlobalData()
+        const [result, globalData] = await Promise.all([
+          getBrowserListPage({
+            page: this.listQuery.page || 1,
+            limit: this.listQuery.limit || 20,
+            group: this.listQuery.group || undefined,
+            q: title || undefined
+          }),
+          getGlobalData()
+        ])
+        this.GlobalData = globalData
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
-        this.list = result.items || []
+        this.list = scrubBrowserListUiFlags(result.items || [])
         this.listTotal = Number(result.total) || 0
         const maxPage = Math.max(1, Math.ceil(this.listTotal / (this.listQuery.limit || 20)) || 1)
         if (this.listQuery.page > maxPage) {
@@ -1408,9 +1668,8 @@ export default {
             return
           }
         }
-        await this.processUpdateData()
+        // 不阻塞首屏：legacy 字段迁移放到后台；sync 状态延迟加载
         await updateRuningState()
-        this.loadSyncStatuses()
       } catch (err) {
         console.error('[browser] getList failed:', err)
         this.list = this.list || []
@@ -1420,8 +1679,21 @@ export default {
         this.listLoading = false
         this.$nextTick(() => {
           this.restoreTableSelection()
+          this.scheduleListBackgroundWork()
         })
       }
+    },
+    scheduleListBackgroundWork() {
+      if (this._listBgTimer) {
+        clearTimeout(this._listBgTimer)
+      }
+      this._listBgTimer = setTimeout(() => {
+        this._listBgTimer = null
+        this.processUpdateData().catch(err => {
+          console.warn('[browser] processUpdateData background failed:', err)
+        })
+        this.loadSyncStatuses()
+      }, 300)
     },
     async loadSyncStatuses() {
       const rows = this.list || []
@@ -1801,10 +2073,12 @@ export default {
         }
       })
     },
-    async processUpdateData() {
-      for (let i = 0; i < this.list.length; i++) {
-        const item = this.list[i]
-        if (this.processData(item)) {
+    async processUpdateData(options = {}) {
+      const persist = options.persist === true
+      const rows = this.list || []
+      for (let i = 0; i < rows.length; i++) {
+        const item = rows[i]
+        if (this.processData(item) && persist) {
           await updateBrowser(item)
         }
       }
@@ -2115,8 +2389,18 @@ export default {
         })
         .catch(() => {})
     },
+    stripIpcErrorPrefix(raw) {
+      let msg = String(raw || '')
+      msg = msg.replace(/^Error invoking remote method '[^']+':\s*/i, '')
+      msg = msg.replace(/^Error:\s*/i, '')
+      return msg.trim() || String(raw || '')
+    },
     async handleLaunch(row) {
-      if (this.isRowBusy(row) && !row.runLoading) return
+      if (!row) return
+      if (this.isRowBusy(row) && !row.runLoading) {
+        this.$message.warning(this.busyReasonText(row) || '当前无法启动，请稍候再试')
+        return
+      }
       if (row.proxy && row.proxy.API) {
         const ok = await this.GetAPIProxy(row)
         if (!ok) {
@@ -2125,6 +2409,12 @@ export default {
         }
       }
       const id = String(row.id)
+      if (row.isRunning) {
+        this.$message.warning('检测到仍标记为已启动，将强制重新启动')
+        this.$set(row, 'isRunning', false)
+        this.$set(row, 'debuggingPort', null)
+        await chromeSend('stopBrowser', id).catch(() => {})
+      }
       this._launchingIds.add(id)
       this.$set(row, 'runLoading', true)
       // spawn 很快；站点云拉取已从启动路径移除，60s 足够
@@ -2144,8 +2434,12 @@ export default {
         const tip =
           raw === 'timeout' || err === 'timeout'
             ? '启动超时。若刚点过云同步请稍候再试；站点数据请用「云同步」拉取，勿依赖启动自动下载。'
-            : raw
-        this.$message.error('启动失败: ' + tip)
+            : this.stripIpcErrorPrefix(raw)
+        this.$message.error({
+          message: '启动失败: ' + tip,
+          duration: 8000,
+          showClose: true
+        })
         chromeSend('appendUiLog', {
           level: 'ERROR',
           message: 'launchBrowser failed',
@@ -2387,7 +2681,10 @@ export default {
       try {
         const data = await this.fetchAndParseAPI(row.proxy.API)
         this.updateProxyData(row.proxy, data)
-        await this.onUpdateRowData(row)
+        // 启动路径：只更新本行并写桥接，不刷整表 / 不拉云状态
+        row.timestamp = +new Date()
+        this.preProcessData(row)
+        await updateBrowser(row)
         return true
       } catch (error) {
         console.error('请求代理 API 失败:', error)
@@ -2757,22 +3054,88 @@ export default {
 }
 
 .sync-loading {
+  height: 28px;
   min-height: 28px;
 }
 
 .sync-cell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
-}
-
-.sync-status-block {
-  cursor: default;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px;
 }
 
 .sync-dropdown {
-  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.jddj-cell {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  padding: 0;
+  min-height: 28px;
+  flex-wrap: nowrap;
+}
+
+.jddj-cell.is-loading {
+  opacity: 0.75;
+}
+
+.jddj-summary {
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.jddj-shop {
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.jddj-status-inline {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #909399;
+  margin-left: 2px;
+}
+
+.jddj-meta {
+  font-size: 11px;
+  color: #909399;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jddj-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.jddj-drawer {
+  padding: 0 8px 16px;
+}
+
+.jddj-drawer-head {
+  margin-bottom: 12px;
 }
 
 .action-delete {

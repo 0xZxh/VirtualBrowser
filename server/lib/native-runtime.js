@@ -64,7 +64,8 @@ function readJson(file, fallback) {
 
 function writeJson(file, data) {
   ensureDir(path.dirname(file))
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8')
+  // compact JSON: virtual.dat / browser-list can be large (cookies); pretty-print was slow
+  fs.writeFileSync(file, JSON.stringify(data), 'utf8')
 }
 
 function sanitizeEnvItemCookies(item) {
@@ -149,6 +150,14 @@ function syncWorkerProfiles(data) {
   }
 }
 
+/** Only rewrite virtual.dat for given env ids (list refresh / single upsert). */
+function syncWorkerProfilesByIds(data, ids) {
+  const idSet = new Set((ids || []).map(id => String(id)))
+  if (!idSet.size) return
+  const users = ((data && data.users) || []).filter(item => idSet.has(String(item.id)))
+  syncWorkerProfiles({ users })
+}
+
 /** 启动前从 browser-list.json 刷新该环境的 virtual.dat */
 function refreshWorkerVirtualDat(envId) {
   const id = String(envId)
@@ -167,12 +176,27 @@ function refreshWorkerVirtualDat(envId) {
 }
 
 /**
- * 解析启动落地 URL：自定义主页优先；否则把共享 global.dat 的 apiLink
- * （缺省则自建 cloudApiBase/api/ip-geo）注入 chrome://virtual-worker。
+ * 解析启动落地 URL：自定义主页优先；缺省默认京东到家门店页。
+ * virtual-worker 仅当 homepage.mode===2（显式 IP 探测）时使用。
  */
+const DEFAULT_LAUNCH_HOMEPAGE = 'https://store.jddj.com/'
+
 function resolveLaunchStartupUrl(item) {
   const homepage = item && item.homepage
-  if (homepage && Number(homepage.mode) === 1) {
+  const mode = homepage != null ? Number(homepage.mode) : NaN
+
+  // mode=2：显式走 IP/virtual-worker 探测页
+  if (mode === 2) {
+    const globalData = readGlobalDataFile()
+    const apiLink = String(
+      (globalData && globalData.apiLink) || cloudSync.getDefaultIpGeoApiLink()
+    ).trim()
+    if (apiLink) {
+      return `chrome://virtual-worker/?apiLink=${encodeURIComponent(apiLink)}`
+    }
+  }
+
+  if (homepage && mode === 1) {
     const raw = String(homepage.value || '').trim()
     if (raw) {
       if (/^https?:\/\//i.test(raw) || /^chrome:\/\//i.test(raw)) {
@@ -182,14 +206,8 @@ function resolveLaunchStartupUrl(item) {
     }
   }
 
-  const globalData = readGlobalDataFile()
-  const apiLink = String(
-    (globalData && globalData.apiLink) || cloudSync.getDefaultIpGeoApiLink()
-  ).trim()
-  if (apiLink) {
-    return `chrome://virtual-worker/?apiLink=${encodeURIComponent(apiLink)}`
-  }
-  return null
+  // mode=0 / 缺省 / 空 value：产品默认主页（不再默默落到 virtual-worker）
+  return DEFAULT_LAUNCH_HOMEPAGE
 }
 
 function isHttpStartupUrl(url) {
@@ -197,7 +215,7 @@ function isHttpStartupUrl(url) {
 }
 
 /**
- * 启动前写入 Chromium Preferences，避免恢复上次的 virtual-worker。
+ * 启动前写入 Chromium Preferences，避免恢复会话任务留下的页面。
  */
 function applyStartupPreferences(workerDir, startupUrl) {
   if (!isHttpStartupUrl(startupUrl)) return
@@ -215,10 +233,32 @@ function applyStartupPreferences(workerDir, startupUrl) {
   if (!prefs.session || typeof prefs.session !== 'object') {
     prefs.session = {}
   }
+  // 4 = Open a specific set of URLs；清掉会话恢复相关字段，避免回到刷新店铺留下的页
   prefs.session.restore_on_startup = 4
   prefs.session.startup_urls = [startupUrl]
+  delete prefs.session.urls_to_restore_on_startup
+  delete prefs.session.startup_urls_migration
+  if (prefs.profile && typeof prefs.profile === 'object') {
+    delete prefs.profile.exited_cleanly
+  }
   writeJson(prefPath, prefs)
   console.log('[native-runtime] Preferences startup_urls=', startupUrl)
+}
+
+/** 会话任务结束后清理 Preferences，避免污染下次人工启动 */
+function clearSessionStartupPollution(workerDir) {
+  const prefPath = path.join(workerDir, 'Default', 'Preferences')
+  if (!fs.existsSync(prefPath)) return
+  try {
+    const prefs = JSON.parse(fs.readFileSync(prefPath, 'utf8'))
+    if (!prefs.session || typeof prefs.session !== 'object') return
+    delete prefs.session.urls_to_restore_on_startup
+    prefs.session.restore_on_startup = 4
+    prefs.session.startup_urls = [DEFAULT_LAUNCH_HOMEPAGE]
+    writeJson(prefPath, prefs)
+  } catch (err) {
+    console.warn('[native-runtime] clearSessionStartupPollution failed:', err.message)
+  }
 }
 
 function getRunningIds() {
@@ -306,17 +346,28 @@ async function getEnvDebugInfo(envId) {
   }
 }
 
-async function pullProfileIfNeeded(id, req) {
+/**
+ * 云端较新则 pull。fail-soft：失败只打日志。
+ * @param {string} id
+ * @param {object} req
+ * @param {{ timeoutMs?: number }} [options] 超时后中止等待（下载可能仍在后台；不阻断启动）
+ */
+async function pullProfileIfNeeded(id, req, options = {}) {
   const token = getCloudToken(req)
   if (!token) {
     console.log(
       '[native-runtime] cloud pull skipped: 未登录且无 CLOUD_API_TOKEN（请先登录管理 UI）'
     )
-    return
+    return { pulled: false, reason: 'no-token' }
   }
 
   const workerDir = path.join(workersRoot, id)
-  try {
+  const timeoutMs =
+    options.timeoutMs != null && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : 0
+
+  const doPull = async () => {
     const decision = await cloudSync.shouldPullFromCloud(id, workerDir, token)
     if (!decision.pull) {
       console.log(
@@ -325,7 +376,7 @@ async function pullProfileIfNeeded(id, req) {
         'reason=',
         decision.reason
       )
-      return
+      return { pulled: false, reason: decision.reason, cloudMeta: decision.cloudMeta }
     }
 
     console.log(
@@ -343,8 +394,34 @@ async function pullProfileIfNeeded(id, req) {
       'extracted=',
       result && result.extracted
     )
+    return {
+      pulled: true,
+      reason: decision.reason,
+      cloudMeta: decision.cloudMeta,
+      extracted: result && result.extracted
+    }
+  }
+
+  try {
+    if (!timeoutMs) {
+      return await doPull()
+    }
+    let timer = null
+    const result = await Promise.race([
+      doPull(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`cloud pull 超时 (${timeoutMs}ms)`))
+        }, timeoutMs)
+      })
+    ]).finally(() => {
+      if (timer) clearTimeout(timer)
+    })
+    return result
   } catch (err) {
     console.error('[native-runtime] cloud pull failed:', err.message)
+    warnNative('cloud pull fail-soft', { envId: id, error: err.message })
+    return { pulled: false, reason: 'error', error: err.message }
   }
 }
 
@@ -480,6 +557,36 @@ function clearSingletonLocks(workerDir) {
 }
 
 /**
+ * Windows：按 PID 杀进程树（Chromium 会拉起多个同名子进程）。
+ */
+function killPidTree(pid) {
+  const n = Number(pid)
+  if (!Number.isFinite(n) || n <= 0) return false
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('taskkill.exe', ['/F', '/T', '/PID', String(n)], {
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      return true
+    } catch {
+      try {
+        process.kill(n)
+        return true
+      } catch {
+        return false
+      }
+    }
+  }
+  try {
+    process.kill(n)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 杀掉占用该环境 user-data-dir / worker-id 的残留内核进程（不含桌面壳本身）。
  * 桌面壳与内核同名 VirtualBrowser.exe，必须用命令行参数区分。
  */
@@ -510,39 +617,16 @@ function killStaleWorkerProcesses(envId, workerDir) {
       const matchWorker = cmd.includes(workerMarker)
       const matchDir =
         cmdLower.includes('--user-data-dir=') && cmdLower.includes(dirNorm)
-      // 内核路径含 Chrome-bin；桌面壳没有 worker-id
-      const looksLikeKernel =
-        /chrome-bin/i.test(cmd) || cmd.includes('--remote-debugging-port=')
-      if (!(matchWorker || matchDir) || !looksLikeKernel) continue
-      try {
-        process.kill(pid)
+      // 桌面壳不会带 --worker-id / Workers user-data-dir；助手进程常只有 --type=
+      if (!(matchWorker || matchDir)) continue
+      if (killPidTree(pid)) {
         killed += 1
         console.log(
-          '[native-runtime] killed stale kernel pid=',
+          '[native-runtime] killed stale kernel tree pid=',
           pid,
           'envId=',
           id
         )
-      } catch (err) {
-        try {
-          execFileSync('taskkill.exe', ['/F', '/PID', String(pid)], {
-            stdio: 'ignore',
-            windowsHide: true
-          })
-          killed += 1
-          console.log(
-            '[native-runtime] taskkill stale kernel pid=',
-            pid,
-            'envId=',
-            id
-          )
-        } catch (err2) {
-          console.warn(
-            '[native-runtime] kill stale failed pid=',
-            pid,
-            err2.message
-          )
-        }
       }
     }
   } catch (err) {
@@ -551,19 +635,66 @@ function killStaleWorkerProcesses(envId, workerDir) {
   return { killed }
 }
 
+/** 结束所有指纹内核（管理端退出时用；不杀桌面壳 Electron） */
+function killAllWorkerKernels() {
+  if (process.platform !== 'win32') return { killed: 0 }
+  const workersRootNorm = path.resolve(workersRoot).toLowerCase()
+  let killed = 0
+  try {
+    const raw = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='VirtualBrowser.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 20000 }
+    ).trim()
+    if (!raw) return { killed: 0 }
+    const rows = JSON.parse(raw)
+    const list = Array.isArray(rows) ? rows : [rows]
+    for (const row of list) {
+      const cmd = String((row && row.CommandLine) || '')
+      const pid = Number(row && row.ProcessId)
+      if (!pid || !cmd) continue
+      const cmdLower = cmd.toLowerCase()
+      // 内核：worker-id / Workers 目录 / Chrome-bin；桌面壳均不具备
+      const looksLikeKernel =
+        cmd.includes('--worker-id=') ||
+        (cmdLower.includes('--user-data-dir=') &&
+          cmdLower.includes(workersRootNorm)) ||
+        (/chrome-bin/i.test(cmd) &&
+          (cmd.includes('--type=') ||
+            cmd.includes('--remote-debugging-port=') ||
+            cmd.includes('--worker-id=')))
+      if (!looksLikeKernel) continue
+      if (killPidTree(pid)) {
+        killed += 1
+        console.log('[native-runtime] killAllWorkerKernels pid=', pid)
+      }
+    }
+  } catch (err) {
+    console.warn('[native-runtime] killAllWorkerKernels failed:', err.message)
+  }
+  return { killed }
+}
+
 /** 启动前：结束残留内核 + 清 Singleton 锁，避免「点了没窗 / CDP 不起」 */
 function prepareWorkerForLaunch(envId, workerDir) {
   const tracked = running.get(String(envId))
   if (tracked && tracked.exitCode == null && !tracked.killed) {
+    const pid = tracked.pid
     try {
       tracked.kill()
     } catch (_) {
       /* ignore */
     }
+    if (pid) killPidTree(pid)
     running.delete(String(envId))
     releaseDebugPortForEnv(String(envId))
   }
-  const { killed } = killStaleWorkerProcesses(envId, workerDir)
+  // 关窗后助手进程常无 Singleton 锁，启动前一律扫残留
+  const killed = killStaleWorkerProcesses(envId, workerDir).killed
   clearSingletonLocks(workerDir)
   return { killed }
 }
@@ -572,6 +703,21 @@ function attachExitHandler(proc, id, workerDir, req) {
   proc.on('exit', code => {
     running.delete(id)
     releaseDebugPortForEnv(id)
+    // 主进程退出后 Chromium 助手进程常残留，扫一遍同 env 的内核树
+    try {
+      const swept = killStaleWorkerProcesses(id, workerDir)
+      if (swept.killed > 0) {
+        console.log(
+          '[native-runtime] exit sweep killed=',
+          swept.killed,
+          'envId=',
+          id
+        )
+      }
+    } catch (err) {
+      console.warn('[native-runtime] exit sweep failed:', err.message)
+    }
+    clearSessionStartupPollution(workerDir)
     if (browserExitListener) {
       try {
         browserExitListener(id)
@@ -614,6 +760,26 @@ function attachExitHandler(proc, id, workerDir, req) {
   })
 }
 
+/**
+ * 会话/无头启动：尽量 headless；指纹内核若不吃 --headless=new 则用离屏+最小化降级。
+ */
+function buildSessionLaunchArgs(options = {}) {
+  const args = []
+  if (options.headlessHint) {
+    args.push('--headless=new')
+    args.push('--disable-gpu')
+  }
+  if (options.minimize || options.headlessHint) {
+    // 不抢焦点 / 离屏（Windows 指纹内核常忽略标准 headless）
+    args.push('--window-position=-32000,-32000')
+    args.push('--window-size=1280,800')
+  }
+  if (Array.isArray(options.tempLaunchArgs)) {
+    args.push(...options.tempLaunchArgs)
+  }
+  return args
+}
+
 async function launchBrowser(envId, req, options = {}) {
   const id = String(envId)
   if (process.platform !== 'win32') {
@@ -642,13 +808,26 @@ async function launchBrowser(envId, req, options = {}) {
   if (token) {
     cloudTokenByEnv.set(id, token)
   }
-  // 启动路径不再 await 云端 pull（大快照会卡死 IPC / 前端超时）。
-  // 站点 Cookie/存储请用列表「云同步」手动拉取；指纹表单走 Mongo + virtual.dat。
-  console.log(
-    '[native-runtime] launchBrowser: skip auto cloud pull envId=',
-    id,
-    '（站点数据请用云同步按钮）'
-  )
+
+  // 云端较新则 pull（带超时、fail-soft）。会话任务可 skipCloudPull（已单独拉过）。
+  // 普通启动默认开启短超时 pull，避免多机 profile 过旧；超时不阻断启动。
+  if (!options.skipCloudPull) {
+    const pullTimeoutMs =
+      options.pullTimeoutMs != null ? Number(options.pullTimeoutMs) : 20000
+    console.log(
+      '[native-runtime] launchBrowser: pullProfileIfNeeded envId=',
+      id,
+      'timeoutMs=',
+      pullTimeoutMs
+    )
+    await pullProfileIfNeeded(id, req, { timeoutMs: pullTimeoutMs })
+  } else {
+    console.log(
+      '[native-runtime] launchBrowser: skip cloud pull envId=',
+      id
+    )
+  }
+
   const item = refreshWorkerVirtualDat(id)
 
   const extPaths = crxStore.getEnabledExtensionPathsForEnv(id, getEnvCrxIds(id))
@@ -660,9 +839,15 @@ async function launchBrowser(envId, req, options = {}) {
     `--user-data-dir=${workerDir}`,
     `--remote-debugging-port=${debuggingPort}`
   ]
-  if (options.tempLaunchArgs && Array.isArray(options.tempLaunchArgs)) {
+
+  const sessionArgs = buildSessionLaunchArgs(options)
+  if (sessionArgs.length) {
+    spawnArgs.push(...sessionArgs)
+    console.log('[native-runtime] session launch args=', sessionArgs)
+  } else if (options.tempLaunchArgs && Array.isArray(options.tempLaunchArgs)) {
     spawnArgs.push(...options.tempLaunchArgs)
   }
+
   if (extPaths.length) {
     const joined = extPaths.join(',')
     spawnArgs.push(`--load-extension=${joined}`)
@@ -670,25 +855,33 @@ async function launchBrowser(envId, req, options = {}) {
     console.log('[native-runtime] load-extension envId=', id, 'paths=', extPaths)
   }
 
-  const startupUrl = resolveLaunchStartupUrl(item)
-  if (isHttpStartupUrl(startupUrl)) {
-    applyStartupPreferences(workerDir, startupUrl)
+  const skipUiNavigate = !!options.skipUiNavigate || !!options.sessionMode
+  let startupUrl = resolveLaunchStartupUrl(item)
+  if (skipUiNavigate) {
+    // 会话任务自行导航到到家后台，避免先打开自定义主页抢焦点
+    startupUrl = null
+  } else if (startupUrl) {
+    // 每次正常启动都写 Preferences，避免会话任务留下的恢复页
+    if (isHttpStartupUrl(startupUrl)) {
+      applyStartupPreferences(workerDir, startupUrl)
+    }
   }
   if (startupUrl) {
     spawnArgs.push(startupUrl)
     console.log('[native-runtime] startupUrl=', startupUrl)
   }
 
+  const windowsHide = !!(options.minimize || options.headlessHint || options.sessionMode)
   const proc = spawn(innerExe, spawnArgs, {
     detached: true,
     stdio: 'ignore',
-    windowsHide: false
+    windowsHide
   })
   proc.unref()
   running.set(id, proc)
   attachExitHandler(proc, id, workerDir, req)
   console.log('[native-runtime] launchBrowser id=', id, 'debuggingPort=', debuggingPort)
-  logNative('launchBrowser', { envId: id, debuggingPort })
+  logNative('launchBrowser', { envId: id, debuggingPort, sessionMode: !!options.sessionMode })
 
   // 先等 CDP 就绪再给 UI 成功；否则 spawn 成功但内核秒崩会被误判为「已启动」
   const CDP_READY_MS = 20000
@@ -698,13 +891,22 @@ async function launchBrowser(envId, req, options = {}) {
       cdpNavigate.waitForCdpReady(debuggingPort, CDP_READY_MS),
       new Promise((_, reject) => {
         const fail = (code, signal) => {
-          const osHint =
-            item && item.os && /mac|linux/i.test(String(item.os))
-              ? `当前指纹 OS 为「${item.os}」，在 Windows 内核上易崩溃，请先改为 Win 10/11。`
-              : '可尝试删除本机 Workers 目录后冷启动，或将 OS 改为 Win 10/11。'
+          const n = Number(code)
+          const isAccessViolation =
+            n === 3221225477 || n === -1073741819 || (Number.isFinite(n) && (n >>> 0) === 0xc0000005)
+          const codeLabel = isAccessViolation
+            ? `ACCESS_VIOLATION / 0xC0000005 (code=${code})`
+            : `code=${code}${signal ? ` signal=${signal}` : ''}`
+          let hint
+          if (item && item.os && /mac|linux/i.test(String(item.os))) {
+            hint = `当前指纹 OS 为「${item.os}」，在 Windows 内核上易崩溃，请先改为 Win 10/11。`
+          } else {
+            hint =
+              '排查：①删除该环境 Workers/<id> 后重试；②检查杀毒是否拦截 / Chrome-bin 是否完整；③环境数据异常（含 virtual.dat 内过大或异常 Cookie）时可先关闭 Cookie 模式或清空 Cookie 后再试。'
+          }
           reject(
             new Error(
-              `指纹内核启动后立即退出 (code=${code}${signal ? ` signal=${signal}` : ''})。${osHint}`
+              `内核进程异常退出 (${codeLabel})，启动未完成（CDP 未就绪）。${hint}`
             )
           )
         }
@@ -740,77 +942,185 @@ async function launchBrowser(envId, req, options = {}) {
     }
   }
 
-  // CDP 已就绪：后台导航 + Cookie 注入（不阻塞 IPC）
-  ;(async () => {
-    if (isHttpStartupUrl(startupUrl)) {
-      try {
-        const nav = await cdpNavigate.navigateToUrl(debuggingPort, startupUrl, 20000)
-        console.log('[native-runtime] CDP navigate ok:', nav.method, startupUrl)
-      } catch (err) {
-        console.error('[native-runtime] CDP navigate failed:', err.message)
-      }
-    }
-
-    // Cookie 表单 mode=1 时用 CDP Network.setCookie 强制注入（不依赖内核读 virtual.dat）
-    try {
-      const cookie = item && item.cookie
-      if (
-        cookie &&
-        Number(cookie.mode) === 1 &&
-        Array.isArray(cookie.value) &&
-        cookie.value.length > 0
-      ) {
-        const result = await cdpNavigate.injectCookies(
-          debuggingPort,
-          cookie.value,
-          15000
-        )
+  const autoCloseMs =
+    options.autoCloseMs != null
+      ? Number(options.autoCloseMs)
+      : options.autoClose
+        ? Number(options.autoClose) || 90000
+        : 0
+  if (autoCloseMs > 0) {
+    setTimeout(() => {
+      const still = running.get(id)
+      if (still && still.exitCode == null && !still.killed) {
         console.log(
-          '[native-runtime] CDP cookie inject envId=',
+          '[native-runtime] autoClose kill envId=',
           id,
-          'ok=',
-          result.ok,
-          'fail=',
-          result.fail
+          'afterMs=',
+          autoCloseMs
         )
-        logNative('CDP cookie inject', {
-          envId: id,
-          ok: result.ok,
-          fail: result.fail
-        })
-        if (result.fail > 0 && result.errors && result.errors.length) {
-          console.warn(
-            '[native-runtime] CDP cookie inject errors:',
-            result.errors.slice(0, 5).join('; ')
-          )
-          warnNative('CDP cookie inject errors', {
-            envId: id,
-            errors: result.errors.slice(0, 5)
-          })
+        try {
+          still.kill()
+        } catch (_) {
+          /* ignore */
         }
       }
-    } catch (err) {
-      console.error('[native-runtime] CDP cookie inject failed:', err.message)
-      errorNative('CDP cookie inject failed', {
-        envId: id,
-        error: err && err.message ? err.message : String(err)
-      })
-    }
-  })()
+    }, autoCloseMs)
+  }
 
-  return { ok: true, debuggingPort, envId: id, startupUrl: startupUrl || null }
+  // CDP 已就绪：后台导航 + Cookie 注入（不阻塞 IPC）；会话模式由 session-worker 自行导航
+  if (!skipUiNavigate) {
+    ;(async () => {
+      if (isHttpStartupUrl(startupUrl)) {
+        try {
+          const nav = await cdpNavigate.navigateToUrl(debuggingPort, startupUrl, 20000)
+          console.log('[native-runtime] CDP navigate ok:', nav.method, startupUrl)
+        } catch (err) {
+          console.error('[native-runtime] CDP navigate failed:', err.message)
+        }
+      }
+
+      // Cookie 表单 mode=1 时用 CDP Network.setCookie 强制注入（不依赖内核读 virtual.dat）
+      try {
+        const cookie = item && item.cookie
+        if (
+          cookie &&
+          Number(cookie.mode) === 1 &&
+          Array.isArray(cookie.value) &&
+          cookie.value.length > 0
+        ) {
+          const result = await cdpNavigate.injectCookies(
+            debuggingPort,
+            cookie.value,
+            15000
+          )
+          console.log(
+            '[native-runtime] CDP cookie inject envId=',
+            id,
+            'ok=',
+            result.ok,
+            'fail=',
+            result.fail
+          )
+          logNative('CDP cookie inject', {
+            envId: id,
+            ok: result.ok,
+            fail: result.fail
+          })
+          if (result.fail > 0 && result.errors && result.errors.length) {
+            console.warn(
+              '[native-runtime] CDP cookie inject errors:',
+              result.errors.slice(0, 5).join('; ')
+            )
+            warnNative('CDP cookie inject errors', {
+              envId: id,
+              errors: result.errors.slice(0, 5)
+            })
+          }
+        }
+      } catch (err) {
+        console.error('[native-runtime] CDP cookie inject failed:', err.message)
+        errorNative('CDP cookie inject failed', {
+          envId: id,
+          error: err && err.message ? err.message : String(err)
+        })
+      }
+    })()
+  } else {
+    // 会话模式仍注入 cookie（mode=1），便于打开到家后台已登录
+    ;(async () => {
+      try {
+        const cookie = item && item.cookie
+        if (
+          cookie &&
+          Number(cookie.mode) === 1 &&
+          Array.isArray(cookie.value) &&
+          cookie.value.length > 0
+        ) {
+          const result = await cdpNavigate.injectCookies(
+            debuggingPort,
+            cookie.value,
+            15000
+          )
+          console.log(
+            '[native-runtime] session CDP cookie inject envId=',
+            id,
+            'ok=',
+            result.ok,
+            'fail=',
+            result.fail
+          )
+        }
+      } catch (err) {
+        console.error('[native-runtime] session cookie inject failed:', err.message)
+      }
+    })()
+  }
+
+  return {
+    ok: true,
+    debuggingPort,
+    envId: id,
+    startupUrl: startupUrl || null,
+    sessionMode: !!options.sessionMode
+  }
 }
 
 async function stopBrowser(envId, req) {
   const id = String(envId)
+  const workerDir = path.join(workersRoot, id)
   const proc = running.get(id)
-  if (!proc || proc.exitCode != null || proc.killed) {
-    releaseDebugPortForEnv(id)
-    running.delete(id)
-    return { ok: true, envId: id, wasRunning: false }
+  let wasRunning = false
+  if (proc && proc.exitCode == null && !proc.killed) {
+    wasRunning = true
+    const pid = proc.pid
+    try {
+      proc.kill()
+    } catch (_) {
+      /* ignore */
+    }
+    if (pid) {
+      killPidTree(pid)
+    }
   }
-  proc.kill()
-  return { ok: true, envId: id, wasRunning: true }
+  running.delete(id)
+  releaseDebugPortForEnv(id)
+  // 无论是否在 running Map：扫同 env 的残留子进程（关窗后常见）
+  const swept = killStaleWorkerProcesses(id, workerDir)
+  clearSessionStartupPollution(workerDir)
+  console.log(
+    '[native-runtime] stopBrowser envId=',
+    id,
+    'wasRunning=',
+    wasRunning,
+    'swept=',
+    swept.killed
+  )
+  return { ok: true, envId: id, wasRunning, swept: swept.killed }
+}
+
+/** 停止所有已跟踪环境并清扫全部 worker 内核（管理端退出） */
+function stopAllBrowsers() {
+  const ids = [...running.keys()]
+  for (const id of ids) {
+    try {
+      const proc = running.get(id)
+      if (proc && proc.pid) {
+        try {
+          proc.kill()
+        } catch (_) {
+          /* ignore */
+        }
+        killPidTree(proc.pid)
+      }
+      running.delete(id)
+      releaseDebugPortForEnv(id)
+    } catch (err) {
+      console.warn('[native-runtime] stopAllBrowsers item failed', id, err.message)
+    }
+  }
+  const all = killAllWorkerKernels()
+  console.log('[native-runtime] stopAllBrowsers killedKernels=', all.killed)
+  return { ok: true, tracked: ids.length, killedKernels: all.killed }
 }
 
 /**
@@ -929,8 +1239,18 @@ async function handleNativeCall(name, params = [], req) {
     }
     case 'setBrowserList': {
       const data = params[0] || { users: [] }
+      const opt = params[1] || {}
       writeJson(listFile, data)
-      syncWorkerProfiles(data)
+      // syncWorkers: 'all' (default) | 'ids' | 'none'
+      // 列表翻页只更新 list 文件、不写全部 virtual.dat，避免环境多时卡死
+      const mode = opt.syncWorkers || 'all'
+      if (mode === 'none') {
+        // list cache only
+      } else if (mode === 'ids') {
+        syncWorkerProfilesByIds(data, opt.ids || [])
+      } else {
+        syncWorkerProfiles(data)
+      }
       return { ok: true }
     }
     case 'getGlobalData': {
@@ -1010,6 +1330,22 @@ async function handleNativeCall(name, params = [], req) {
       const options = params[1] && typeof params[1] === 'object' ? params[1] : {}
       return launchBrowser(id, req, options)
     }
+    case 'runSessionKeepalive': {
+      const id = String(params[0])
+      const options = params[1] && typeof params[1] === 'object' ? params[1] : {}
+      const sessionWorker = require('./session-worker')
+      return sessionWorker.runSessionKeepalive(module.exports, id, req, options)
+    }
+    case 'runJddjFetch': {
+      const id = String(params[0])
+      const options = params[1] && typeof params[1] === 'object' ? params[1] : {}
+      const sessionWorker = require('./session-worker')
+      return sessionWorker.runJddjFetch(module.exports, id, req, options)
+    }
+    case 'getSessionQueueStats': {
+      const sessionWorker = require('./session-worker')
+      return sessionWorker.getQueueStats()
+    }
     case 'getLocalCrxList':
     case 'getCrxList':
       return crxStore.getCrxList()
@@ -1052,6 +1388,8 @@ module.exports = {
   releaseDebugPort,
   launchBrowser,
   stopBrowser,
+  stopAllBrowsers,
+  killAllWorkerKernels,
   checkProxy,
   handleNativeCall,
   getRunningIds,
@@ -1059,5 +1397,8 @@ module.exports = {
   getEnvDebugInfo,
   setBrowserExitListener,
   refreshWorkerVirtualDat,
-  resolveLaunchStartupUrl
+  resolveLaunchStartupUrl,
+  pullProfileIfNeeded,
+  uploadPackedSnapshot,
+  getCloudToken
 }

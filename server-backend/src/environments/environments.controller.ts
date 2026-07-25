@@ -103,6 +103,28 @@ export class EnvironmentsController {
     return { code: 0, data }
   }
 
+  @Get(':envId/site-snapshot')
+  async getSiteSnapshot(@Param('envId') envId: string, @Req() req: { user: UserRecord }) {
+    const data = await this.environmentsService.getSiteSnapshot(req.user, envId)
+    return { code: 0, data }
+  }
+
+  @Put(':envId/site-snapshot')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'operator')
+  async putSiteSnapshot(
+    @Param('envId') envId: string,
+    @Req() req: { user: UserRecord },
+    @Body()
+    body: {
+      jddj?: Record<string, unknown>
+      siteSnapshot?: Record<string, unknown>
+    }
+  ) {
+    const data = await this.environmentsService.updateSiteSnapshot(req.user, envId, body || {})
+    return { code: 0, data }
+  }
+
   @Delete(':envId')
   @UseGuards(RolesGuard)
   @Roles('admin')
