@@ -79,14 +79,22 @@
       :data="list"
       :height="tableHeight"
       :row-key="getRowKey"
+      :default-sort="{ prop: 'id', order: 'ascending' }"
       fit
       class="browser-table"
       @selection-change="handleSelectionChange"
       @select="handleSelect"
       @select-all="handleSelectAll"
+      @sort-change="handleListSortChange"
     >
       <el-table-column type="selection" width="60" align="center" reserve-selection />
-      <el-table-column :label="$t('browser.id')" prop="id" sortable align="center" width="80">
+      <el-table-column
+        :label="$t('browser.id')"
+        prop="id"
+        sortable="custom"
+        align="center"
+        width="80"
+      >
         <template slot-scope="{ row }">
           <span>{{ row.id }}</span>
         </template>
@@ -116,13 +124,13 @@
       </el-table-column>
       <el-table-column
         :label="$t('browser.date')"
-        sortable
-        prop="timestamp"
+        sortable="custom"
+        prop="createdAt"
         width="150px"
         align="center"
       >
         <template slot-scope="{ row }">
-          <span>{{ row.timestamp | parseTime('{y}-{m}-{d} {h}:{i}') }}</span>
+          <span>{{ formatCreatedAt(row) }}</span>
         </template>
       </el-table-column>
 
@@ -1100,7 +1108,9 @@ export default {
         page: 1,
         limit: 20,
         title: undefined,
-        group: ''
+        group: '',
+        sortBy: 'id',
+        sortOrder: 'asc'
       },
       dialogFormVisible: false,
       formSubmitLoading: false,
@@ -1652,7 +1662,9 @@ export default {
             page: this.listQuery.page || 1,
             limit: this.listQuery.limit || 20,
             group: this.listQuery.group || undefined,
-            q: title || undefined
+            q: title || undefined,
+            sortBy: this.listQuery.sortBy || 'id',
+            sortOrder: this.listQuery.sortOrder || 'asc'
           }),
           getGlobalData()
         ])
@@ -1748,6 +1760,38 @@ export default {
       const hostPort =
         row.proxy.host && row.proxy.port ? ` ${row.proxy.host}:${row.proxy.port}` : ''
       return `${row.proxy.protocol || ''}${hostPort}`.trim() || '—'
+    },
+    formatCreatedAt(row) {
+      const raw = (row && (row.createdAt || row.timestamp)) || ''
+      let d
+      if (typeof raw === 'number') {
+        d = new Date(raw)
+      } else {
+        const n = Number(raw)
+        d =
+          Number.isFinite(n) && String(raw).length >= 10 && !String(raw).includes('-')
+            ? new Date(n)
+            : new Date(raw)
+      }
+      if (!d || Number.isNaN(d.getTime())) return '—'
+      const pad = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+        d.getHours()
+      )}:${pad(d.getMinutes())}`
+    },
+    handleListSortChange({ prop, order }) {
+      if (!order) {
+        this.listQuery.sortBy = 'id'
+        this.listQuery.sortOrder = 'asc'
+      } else if (prop === 'createdAt' || prop === 'timestamp') {
+        this.listQuery.sortBy = 'createdAt'
+        this.listQuery.sortOrder = order === 'descending' ? 'desc' : 'asc'
+      } else {
+        this.listQuery.sortBy = 'id'
+        this.listQuery.sortOrder = order === 'descending' ? 'desc' : 'asc'
+      }
+      this.listQuery.page = 1
+      this.getList()
     },
     async handleSyncCommand(command, row) {
       if (row.isRunning) {

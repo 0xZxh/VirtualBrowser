@@ -28,14 +28,18 @@ export class EnvironmentsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('group') group?: string,
-    @Query('q') q?: string
+    @Query('q') q?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string
   ) {
     // Always return paginated shape for list UI; defaults page=1 limit=20
     const data = await this.environmentsService.listPage(req.user, {
       page: page != null && page !== '' ? Number(page) : 1,
       limit: limit != null && limit !== '' ? Number(limit) : 20,
       group,
-      q
+      q,
+      sortBy,
+      sortOrder
     })
     return { code: 0, data }
   }

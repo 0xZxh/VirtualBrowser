@@ -85,12 +85,21 @@ export class EnvironmentsService {
 
   async listPage(
     user: UserRecord,
-    query: { page?: number; limit?: number; group?: string; q?: string }
+    query: {
+      page?: number
+      limit?: number
+      group?: string
+      q?: string
+      sortBy?: string
+      sortOrder?: string
+    }
   ): Promise<{ items: BrowserEnvironmentItem[]; total: number }> {
     const page = Math.max(1, Number(query.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
     const group = query.group != null ? String(query.group).trim() : ''
     const q = query.q != null ? String(query.q).trim() : ''
+    const sortBy = query.sortBy === 'createdAt' ? 'createdAt' : 'id'
+    const sortOrder = query.sortOrder === 'desc' ? 'desc' : 'asc'
 
     const filter = {
       ...(this.isAdmin(user) ? { tenantId: user.tenantId } : { ownerId: user.id }),
@@ -99,7 +108,12 @@ export class EnvironmentsService {
     }
 
     const [records, total] = await Promise.all([
-      this.envRepository.findPage(filter, { skip: (page - 1) * limit, limit }),
+      this.envRepository.findPage(filter, {
+        skip: (page - 1) * limit,
+        limit,
+        sortBy,
+        sortOrder
+      }),
       this.envRepository.count(filter)
     ])
 

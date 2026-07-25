@@ -12,6 +12,10 @@ export type EnvironmentListFilter = {
 export type EnvironmentPageOptions = {
   skip: number
   limit: number
+  /** Default: id */
+  sortBy?: 'id' | 'createdAt'
+  /** Default: asc */
+  sortOrder?: 'asc' | 'desc'
 }
 
 export interface EnvironmentRepository {

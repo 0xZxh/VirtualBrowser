@@ -26,7 +26,9 @@ export function toBrowserItem(record: EnvironmentRecord): BrowserEnvironmentItem
     name: record.name,
     group: record.group,
     ownerId: record.ownerId,
-    tenantId: record.tenantId
+    tenantId: record.tenantId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt
   }
 }
 
@@ -38,7 +40,8 @@ export function fromBrowserItem(
 ): EnvironmentRecord {
   const now = new Date().toISOString()
   const id = envId ?? String(item.id ?? '')
-  const { id: _id, name, group, ownerId: _o, tenantId: _t, ...payload } = item
+  const { id: _id, name, group, ownerId: _o, tenantId: _t, createdAt: _c, updatedAt: _u, ...payload } =
+    item
 
   return {
     envId: id,

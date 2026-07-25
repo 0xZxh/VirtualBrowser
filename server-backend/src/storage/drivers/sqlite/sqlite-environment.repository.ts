@@ -61,11 +61,15 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
     const { sql, params } = this.buildWhere(filter)
     const skip = Math.max(0, options.skip || 0)
     const limit = Math.max(1, options.limit || 20)
+    const desc = options.sortOrder === 'desc'
+    const dir = desc ? 'DESC' : 'ASC'
+    const orderSql =
+      options.sortBy === 'createdAt'
+        ? `ORDER BY datetime(created_at) ${dir}, CAST(env_id AS INTEGER) ${dir}, env_id ${dir}`
+        : `ORDER BY CAST(env_id AS INTEGER) ${dir}, env_id ${dir}`
     const rows = this.sqlite
       .getDb()
-      .prepare(
-        `SELECT * FROM environments ${sql} ORDER BY CAST(env_id AS INTEGER) ASC, env_id ASC LIMIT ? OFFSET ?`
-      )
+      .prepare(`SELECT * FROM environments ${sql} ${orderSql} LIMIT ? OFFSET ?`)
       .all(...params, limit, skip) as EnvironmentRow[]
     return rows.map(row => this.mapRow(row))
   }

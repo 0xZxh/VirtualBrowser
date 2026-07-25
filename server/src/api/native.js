@@ -257,8 +257,39 @@ async function fetchPageFromBackend(query = {}) {
   const params = { page, limit }
   if (query.group) params.group = query.group
   if (query.q) params.q = query.q
+  if (query.sortBy) params.sortBy = query.sortBy
+  if (query.sortOrder) params.sortOrder = query.sortOrder
   const res = await fetchEnvironments(params)
   return parsePagePayload(res.data)
+}
+
+function normalizeListSort(query = {}) {
+  const sortBy = query.sortBy === 'createdAt' ? 'createdAt' : 'id'
+  const sortOrder = query.sortOrder === 'desc' ? 'desc' : 'asc'
+  return { sortBy, sortOrder }
+}
+
+function compareBrowserItems(a, b, sortBy, sortOrder) {
+  const mul = sortOrder === 'desc' ? -1 : 1
+  if (sortBy === 'createdAt') {
+    const ta =
+      Date.parse(String((a && a.createdAt) || '')) ||
+      Number(a && a.timestamp) ||
+      0
+    const tb =
+      Date.parse(String((b && b.createdAt) || '')) ||
+      Number(b && b.timestamp) ||
+      0
+    if (ta !== tb) return (ta - tb) * mul
+  }
+  const ia = Number(a && a.id)
+  const ib = Number(b && b.id)
+  if (Number.isFinite(ia) && Number.isFinite(ib) && ia !== ib) {
+    return (ia - ib) * mul
+  }
+  return String((a && a.id) || '').localeCompare(String((b && b.id) || ''), undefined, {
+    numeric: true
+  }) * mul
 }
 
 /** Fetch all pages (for group/admin helpers that still need full set). */
@@ -350,6 +381,8 @@ export async function getBrowserListPage(query = {}) {
         return id === q || id.toLowerCase() === lower || name.includes(lower) || id.toLowerCase().includes(lower)
       })
     }
+    const { sortBy, sortOrder } = normalizeListSort(query)
+    next.sort((a, b) => compareBrowserItems(a, b, sortBy, sortOrder))
     const page = Math.max(1, Number(query.page) || 1)
     const limit = Math.max(1, Number(query.limit) || 20)
     const start = (page - 1) * limit
@@ -358,7 +391,10 @@ export async function getBrowserListPage(query = {}) {
     return { items, total: next.length }
   }
 
-  let result = await fetchPageFromBackend(query)
+  let result = await fetchPageFromBackend({
+    ...query,
+    ...normalizeListSort(query)
+  })
   if ((Number(query.page) || 1) === 1 && !query.group && !query.q) {
     result = await maybeMigrateLegacyEnvironments(result)
   }

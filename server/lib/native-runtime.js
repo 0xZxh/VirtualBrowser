@@ -589,12 +589,18 @@ function killPidTree(pid) {
 /**
  * 杀掉占用该环境 user-data-dir / worker-id 的残留内核进程（不含桌面壳本身）。
  * 桌面壳与内核同名 VirtualBrowser.exe，必须用命令行参数区分。
+ * @param {{ exceptPids?: Iterable<number|string> }} [options]
  */
-function killStaleWorkerProcesses(envId, workerDir) {
+function killStaleWorkerProcesses(envId, workerDir, options = {}) {
   if (process.platform !== 'win32') return { killed: 0 }
   const id = String(envId)
   const workerMarker = `--worker-id=${id}`
   const dirNorm = path.resolve(workerDir).toLowerCase()
+  const except = new Set()
+  for (const p of options.exceptPids || []) {
+    const n = Number(p)
+    if (Number.isFinite(n) && n > 0) except.add(n)
+  }
   let killed = 0
   try {
     const raw = execFileSync(
@@ -613,6 +619,7 @@ function killStaleWorkerProcesses(envId, workerDir) {
       const cmd = String((row && row.CommandLine) || '')
       const pid = Number(row && row.ProcessId)
       if (!pid || !cmd) continue
+      if (except.has(pid)) continue
       const cmdLower = cmd.toLowerCase()
       const matchWorker = cmd.includes(workerMarker)
       const matchDir =
@@ -633,6 +640,10 @@ function killStaleWorkerProcesses(envId, workerDir) {
     console.warn('[native-runtime] list stale processes failed:', err.message)
   }
   return { killed }
+}
+
+function sleepMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 /** 结束所有指纹内核（管理端退出时用；不杀桌面壳 Electron） */
@@ -680,8 +691,10 @@ function killAllWorkerKernels() {
 }
 
 /** 启动前：结束残留内核 + 清 Singleton 锁，避免「点了没窗 / CDP 不起」 */
-function prepareWorkerForLaunch(envId, workerDir) {
-  const tracked = running.get(String(envId))
+async function prepareWorkerForLaunch(envId, workerDir) {
+  const id = String(envId)
+  const tracked = running.get(id)
+  const killedPids = []
   if (tracked && tracked.exitCode == null && !tracked.killed) {
     const pid = tracked.pid
     try {
@@ -689,23 +702,60 @@ function prepareWorkerForLaunch(envId, workerDir) {
     } catch (_) {
       /* ignore */
     }
-    if (pid) killPidTree(pid)
-    running.delete(String(envId))
-    releaseDebugPortForEnv(String(envId))
+    if (pid) {
+      killPidTree(pid)
+      killedPids.push(pid)
+    }
+    // 仅当仍是该 proc 时才删，避免与并发 relaunch 打架
+    if (running.get(id) === tracked) {
+      running.delete(id)
+      releaseDebugPortForEnv(id)
+    }
+    // 给旧进程 exit 回调一点时间，降低误杀新 spawn 的窗口
+    await sleepMs(250)
   }
-  // 关窗后助手进程常无 Singleton 锁，启动前一律扫残留
-  const killed = killStaleWorkerProcesses(envId, workerDir).killed
+  // 关窗后助手进程常无 Singleton 锁，启动前一律扫残留（勿杀即将使用的空 except）
+  const killed = killStaleWorkerProcesses(envId, workerDir, {
+    exceptPids: killedPids
+  }).killed
   clearSingletonLocks(workerDir)
   return { killed }
 }
 
 function attachExitHandler(proc, id, workerDir, req) {
   proc.on('exit', code => {
+    const current = running.get(id)
+    const isCurrent = current === proc
+    if (!isCurrent) {
+      console.log(
+        '[native-runtime] exit ignored (superseded) envId=',
+        id,
+        'oldPid=',
+        proc.pid,
+        'currentPid=',
+        current && current.pid
+      )
+      // 仍清扫孤儿，但保护 Map 里正在跑的新进程
+      const except = []
+      if (current && current.pid) except.push(current.pid)
+      if (proc.pid) except.push(proc.pid)
+      try {
+        killStaleWorkerProcesses(id, workerDir, { exceptPids: except })
+      } catch (err) {
+        console.warn('[native-runtime] superseded exit sweep failed:', err.message)
+      }
+      return
+    }
+
     running.delete(id)
     releaseDebugPortForEnv(id)
     // 主进程退出后 Chromium 助手进程常残留，扫一遍同 env 的内核树
     try {
-      const swept = killStaleWorkerProcesses(id, workerDir)
+      const except = []
+      if (proc.pid) except.push(proc.pid)
+      const still = running.get(id)
+      if (still && still.pid) except.push(still.pid)
+      const swept = killStaleWorkerProcesses(id, workerDir, { exceptPids: except })
       if (swept.killed > 0) {
         console.log(
           '[native-runtime] exit sweep killed=',
@@ -793,7 +843,7 @@ async function launchBrowser(envId, req, options = {}) {
   }
   const workerDir = path.join(workersRoot, id)
   ensureDir(workerDir)
-  const prepared = prepareWorkerForLaunch(id, workerDir)
+  const prepared = await prepareWorkerForLaunch(id, workerDir)
   if (prepared.killed > 0) {
     console.log(
       '[native-runtime] cleared stale kernels before launch envId=',
@@ -802,7 +852,7 @@ async function launchBrowser(envId, req, options = {}) {
       prepared.killed
     )
     // 给 OS 一点时间释放 profile 文件锁
-    await new Promise(r => setTimeout(r, 400))
+    await sleepMs(400)
   }
   const token = getCloudToken(req)
   if (token) {

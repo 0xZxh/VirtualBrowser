@@ -45,9 +45,10 @@ export class JsonEnvironmentRepository implements EnvironmentRepository {
   ): Promise<EnvironmentRecord[]> {
     const skip = Math.max(0, options.skip || 0)
     const limit = Math.max(1, options.limit || 20)
-    return this.filterRows(filter)
-      .slice(skip, skip + limit)
-      .map(row => this.mapRow(row))
+    const sortBy = options.sortBy === 'createdAt' ? 'createdAt' : 'id'
+    const desc = options.sortOrder === 'desc'
+    const rows = this.filterRows(filter, sortBy, desc)
+    return rows.slice(skip, skip + limit).map(row => this.mapRow(row))
   }
 
   async count(filter: EnvironmentListFilter): Promise<number> {
@@ -95,22 +96,33 @@ export class JsonEnvironmentRepository implements EnvironmentRepository {
     return true
   }
 
-  private filterRows(filter: EnvironmentListFilter): JsonEnvironmentRow[] {
+  private filterRows(
+    filter: EnvironmentListFilter,
+    sortBy: 'id' | 'createdAt' = 'id',
+    desc = false
+  ): JsonEnvironmentRow[] {
     const q = filter.q != null ? String(filter.q).trim().toLowerCase() : ''
-    return this.store
-      .readEnvironments()
-      .filter(row => {
-        if (filter.tenantId && row.tenantId !== filter.tenantId) return false
-        if (filter.ownerId && row.ownerId !== filter.ownerId) return false
-        if (filter.group && row.group !== filter.group) return false
-        if (q) {
-          const name = String(row.name || '').toLowerCase()
-          const envId = String(row.envId || '').toLowerCase()
-          if (!name.includes(q) && !envId.includes(q)) return false
-        }
-        return true
-      })
-      .sort((a, b) => a.envId.localeCompare(b.envId, undefined, { numeric: true }))
+    const rows = this.store.readEnvironments().filter(row => {
+      if (filter.tenantId && row.tenantId !== filter.tenantId) return false
+      if (filter.ownerId && row.ownerId !== filter.ownerId) return false
+      if (filter.group && row.group !== filter.group) return false
+      if (q) {
+        const name = String(row.name || '').toLowerCase()
+        const envId = String(row.envId || '').toLowerCase()
+        if (!name.includes(q) && !envId.includes(q)) return false
+      }
+      return true
+    })
+    const mul = desc ? -1 : 1
+    rows.sort((a, b) => {
+      if (sortBy === 'createdAt') {
+        const ta = Date.parse(String(a.createdAt || '')) || 0
+        const tb = Date.parse(String(b.createdAt || '')) || 0
+        if (ta !== tb) return (ta - tb) * mul
+      }
+      return a.envId.localeCompare(b.envId, undefined, { numeric: true }) * mul
+    })
+    return rows
   }
 
   private mapRow(row: JsonEnvironmentRow): EnvironmentRecord {

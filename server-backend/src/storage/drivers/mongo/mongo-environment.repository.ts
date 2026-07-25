@@ -37,12 +37,36 @@ export class MongoEnvironmentRepository implements EnvironmentRepository {
     filter: EnvironmentListFilter,
     options: EnvironmentPageOptions
   ): Promise<EnvironmentRecord[]> {
-    const docs = await this.envModel
-      .find(this.buildQuery(filter))
-      .sort({ envId: 1 })
-      .skip(Math.max(0, options.skip || 0))
-      .limit(Math.max(1, options.limit || 20))
-    return docs.map(doc => this.mapDoc(doc))
+    const skip = Math.max(0, options.skip || 0)
+    const limit = Math.max(1, options.limit || 20)
+    const desc = options.sortOrder === 'desc' ? -1 : 1
+    const sortBy = options.sortBy === 'createdAt' ? 'createdAt' : 'id'
+
+    if (sortBy === 'createdAt') {
+      const docs = await this.envModel
+        .find(this.buildQuery(filter))
+        .sort({ createdAt: desc, envId: desc })
+        .skip(skip)
+        .limit(limit)
+      return docs.map(doc => this.mapDoc(doc))
+    }
+
+    // Numeric envId sort (string envId alone sorts "10" before "2")
+    const match = this.buildQuery(filter)
+    const rows = await this.envModel.aggregate([
+      { $match: match },
+      {
+        $addFields: {
+          _envIdNum: {
+            $convert: { input: '$envId', to: 'int', onError: 0, onNull: 0 }
+          }
+        }
+      },
+      { $sort: { _envIdNum: desc, envId: desc } },
+      { $skip: skip },
+      { $limit: limit }
+    ])
+    return rows.map(doc => this.mapDoc(doc as EnvironmentDocument))
   }
 
   async count(filter: EnvironmentListFilter): Promise<number> {
