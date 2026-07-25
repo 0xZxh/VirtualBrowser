@@ -302,18 +302,26 @@
         createMsg.classList.add('err')
         return
       }
-      const withDomain = parsed.map((item) => {
-        if (!item || typeof item !== 'object') return item
-        const c = Object.assign({}, item)
-        if (!c.domain) c.domain = domain
-        if (!c.path) c.path = '/'
-        return c
-      })
-      const invalid = withDomain.some(
-        (c) => !c || !c.name || c.value == null || c.value === '' || !c.domain
-      )
-      if (invalid) {
-        createMsg.textContent = 'Cookie 格式错误：缺少 name/value/domain'
+      const withDomain = parsed
+        .map((item) => {
+          const norm =
+            parse.normalizeCookieKeys && typeof parse.normalizeCookieKeys === 'function'
+              ? parse.normalizeCookieKeys(item)
+              : item && typeof item === 'object'
+                ? Object.assign({}, item)
+                : null
+          if (!norm || !norm.name) return null
+          if (norm.value == null) norm.value = ''
+          else norm.value = String(norm.value)
+          if (!norm.domain) norm.domain = domain
+          if (!norm.path) norm.path = '/'
+          return norm
+        })
+        .filter(Boolean)
+      // 允许空 value；只要有 name + domain 即可
+      const invalid = withDomain.some((c) => !c || !c.name || !c.domain)
+      if (!withDomain.length || invalid) {
+        createMsg.textContent = 'Cookie 格式错误：缺少 name/domain'
         createMsg.classList.add('err')
         return
       }

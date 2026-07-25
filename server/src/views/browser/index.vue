@@ -1057,7 +1057,8 @@ export default {
         })
 
         const checkNameValue = json.every(item => {
-          return item.name && item.value != null && item.value !== '' && item.domain
+          // 允许空 value（部分站点 Cookie 值为空字符串）
+          return item.name && item.domain && item.value != null
         })
 
         if (!checkNameValue) {

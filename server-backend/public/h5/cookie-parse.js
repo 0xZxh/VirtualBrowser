@@ -41,7 +41,8 @@
       options && options.domain != null && String(options.domain).trim()
         ? sanitizeCookieDomain(options.domain)
         : DEFAULT_COOKIE_DOMAIN
-    var parts = text.split(';')
+    // 支持 ;、中文分号、换行分隔（Alook 等常带换行）
+    var parts = text.split(/[;\uFF1B\r\n]+/)
     var list = []
     for (var i = 0; i < parts.length; i++) {
       var part = parts[i].trim()
@@ -51,9 +52,13 @@
       var name = part.slice(0, eq).trim()
       var value = part.slice(eq + 1)
       if (!name) continue
+      // 跳过 Set-Cookie 属性段（若误粘贴）
+      if (/^(path|domain|expires|max-age|samesite|secure|httponly)$/i.test(name)) {
+        continue
+      }
       list.push({
         name: name,
-        value: value,
+        value: value == null ? '' : String(value),
         domain: domain,
         path: '/',
         sameSite: '',
@@ -65,9 +70,29 @@
     return list.length ? list : null
   }
 
+  function normalizeCookieKeys(item) {
+    if (!item || typeof item !== 'object') return null
+    var cookie = {}
+    Object.keys(item).forEach(function (key) {
+      var newKey = key.substring(0, 1).toLowerCase() + key.substring(1)
+      if (newKey.toLowerCase() === 'samesite') newKey = 'sameSite'
+      cookie[newKey] = item[key]
+    })
+    if (cookie.name != null) cookie.name = String(cookie.name)
+    if (cookie.value != null) cookie.value = String(cookie.value)
+    else cookie.value = ''
+    return cookie
+  }
+
   function parseCookieInput(raw, options) {
     if (Array.isArray(raw)) {
-      return raw.length ? raw : null
+      if (!raw.length) return null
+      var mapped = []
+      for (var i = 0; i < raw.length; i++) {
+        var n = normalizeCookieKeys(raw[i])
+        if (n && n.name) mapped.push(n)
+      }
+      return mapped.length ? mapped : null
     }
     if (raw == null) return null
     if (typeof raw !== 'string') return null
@@ -83,7 +108,9 @@
 
     try {
       var parsed = JSON.parse(text)
-      if (Array.isArray(parsed)) return parsed.length ? parsed : null
+      if (Array.isArray(parsed)) {
+        return parseCookieInput(parsed, options)
+      }
     } catch (e) {
       // not JSON
     }
@@ -95,6 +122,7 @@
     DEFAULT_COOKIE_DOMAIN: DEFAULT_COOKIE_DOMAIN,
     domainFromHomepage: domainFromHomepage,
     parseCookieHeader: parseCookieHeader,
-    parseCookieInput: parseCookieInput
+    parseCookieInput: parseCookieInput,
+    normalizeCookieKeys: normalizeCookieKeys
   }
 })(typeof window !== 'undefined' ? window : this)

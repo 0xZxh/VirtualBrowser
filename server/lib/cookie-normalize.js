@@ -43,11 +43,13 @@ function domainFromHomepage(url) {
 function parseCookieHeader(str, options) {
   const text = String(str == null ? '' : str).trim()
   if (!text) return null
+  if (text.startsWith('[') || text.startsWith('{')) return null
   const domain =
     options && options.domain != null && String(options.domain).trim()
       ? sanitizeCookieDomain(options.domain)
       : DEFAULT_COOKIE_DOMAIN
-  const parts = text.split(';')
+  // Support ; 、 Chinese semicolon 、 newlines (mobile paste)
+  const parts = text.split(/[;\uFF1B\r\n]+/)
   const list = []
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i].trim()
@@ -57,9 +59,12 @@ function parseCookieHeader(str, options) {
     const name = part.slice(0, eq).trim()
     const value = part.slice(eq + 1)
     if (!name) continue
+    if (/^(path|domain|expires|max-age|samesite|secure|httponly)$/i.test(name)) {
+      continue
+    }
     list.push({
       name,
-      value,
+      value: value == null ? '' : String(value),
       domain,
       path: '/',
       sameSite: '',

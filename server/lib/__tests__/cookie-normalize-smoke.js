@@ -76,6 +76,12 @@ assert.strictEqual(header[0].domain, '.jddj.com')
 assert.strictEqual(header[0].path, '/')
 assert.strictEqual(header[2].value, '%E9%87%91')
 
+const withEmpty = parseCookieInput('a=1; b=; c=3', { homepage: 'https://store.jddj.com/' })
+assert.ok(withEmpty)
+assert.strictEqual(withEmpty.length, 3)
+assert.strictEqual(withEmpty[1].name, 'b')
+assert.strictEqual(withEmpty[1].value, '')
+
 console.log('ok: cookie-normalize smoke')
 console.log(
   JSON.stringify(

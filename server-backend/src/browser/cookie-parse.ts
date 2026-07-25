@@ -54,7 +54,7 @@ export function parseCookieHeader(
     options && options.domain != null && String(options.domain).trim()
       ? sanitizeCookieDomain(options.domain)
       : DEFAULT_COOKIE_DOMAIN
-  const parts = text.split(';')
+  const parts = text.split(/[;\uFF1B\r\n]+/)
   const list: ParsedCookie[] = []
   for (const partRaw of parts) {
     const part = partRaw.trim()
@@ -64,9 +64,12 @@ export function parseCookieHeader(
     const name = part.slice(0, eq).trim()
     const value = part.slice(eq + 1)
     if (!name) continue
+    if (/^(path|domain|expires|max-age|samesite|secure|httponly)$/i.test(name)) {
+      continue
+    }
     list.push({
       name,
-      value,
+      value: value == null ? '' : String(value),
       domain,
       path: '/',
       sameSite: '',
