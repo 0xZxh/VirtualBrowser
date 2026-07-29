@@ -7,13 +7,13 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0f172a" />
-    <title>远程建档 · 指纹浏览器</title>
+    <title>远程建档 · 先富</title>
     <link rel="stylesheet" href="./app.css" />
   </head>
   <body>
     <div id="app">
       <header class="top">
-        <div class="brand">指纹浏览器</div>
+        <div class="brand">先富</div>
         <div id="userBar" class="user-bar hidden">
           <span id="userName"></span>
           <button type="button" id="btnLogout" class="link">退出</button>
@@ -55,6 +55,11 @@
               <ul id="groupSuggest" class="combo-list hidden" role="listbox"></ul>
             </div>
             <span class="field-hint">可搜索已有分组；输入新名称将自动创建</span>
+          </label>
+          <label>
+            归属用户
+            <input id="envOwner" type="text" disabled value="" />
+            <span class="field-hint">归属当前登录账号，不可修改</span>
           </label>
           <label>
             启动主页

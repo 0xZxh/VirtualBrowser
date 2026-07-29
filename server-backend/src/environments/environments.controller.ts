@@ -30,7 +30,9 @@ export class EnvironmentsController {
     @Query('group') group?: string,
     @Query('q') q?: string,
     @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: string
+    @Query('sortOrder') sortOrder?: string,
+    @Query('shopId') shopId?: string,
+    @Query('ownerId') ownerId?: string
   ) {
     // Always return paginated shape for list UI; defaults page=1 limit=20
     const data = await this.environmentsService.listPage(req.user, {
@@ -39,8 +41,18 @@ export class EnvironmentsController {
       group,
       q,
       sortBy,
-      sortOrder
+      sortOrder,
+      shopId,
+      ownerId
     })
+    return { code: 0, data }
+  }
+
+  @Get('assign-options')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  async assignOptions(@Req() req: { user: UserRecord }) {
+    const data = await this.environmentsService.listAssignOptions(req.user)
     return { code: 0, data }
   }
 

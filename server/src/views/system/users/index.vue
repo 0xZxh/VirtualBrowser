@@ -130,7 +130,7 @@ import {
   disableUser,
   assignUserEnvironments
 } from '@/api/system-user'
-import { fetchEnvironments } from '@/api/environment'
+import { fetchAssignOptions } from '@/api/environment'
 
 const emptyForm = () => ({
   id: '',
@@ -261,27 +261,13 @@ export default {
       this.assignLoading = true
       this.selectedEnvIds = []
       try {
-        const [usersRes, envRes] = await Promise.all([
-          fetchUserList(),
-          fetchEnvironments({ page: 1, limit: 100 })
-        ])
-        this.list = usersRes.data || []
-        const envData = envRes.data
-        let envs = []
-        if (Array.isArray(envData)) {
-          envs = envData
-        } else if (envData && Array.isArray(envData.items)) {
-          envs = envData.items.slice()
-          const total = Number(envData.total) || envs.length
-          let page = 2
-          while (envs.length < total && page <= 100) {
-            const more = await fetchEnvironments({ page, limit: 100 })
-            const chunk = (more.data && more.data.items) || []
-            if (!chunk.length) break
-            envs.push(...chunk)
-            page += 1
-          }
+        // 复用已加载用户列表，避免弹窗内重复拉用户；环境用轻量 assign-options
+        if (!this.list || !this.list.length) {
+          const usersRes = await fetchUserList()
+          this.list = usersRes.data || []
         }
+        const envRes = await fetchAssignOptions()
+        const envs = Array.isArray(envRes.data) ? envRes.data : []
         this.allEnvironments = envs
         this.selectedEnvIds = this.allEnvironments
           .filter(env => env.ownerId === row.id)

@@ -2,10 +2,10 @@
   <div class="sidebar-logo-container" :class="{ collapse: collapse }">
     <transition name="sidebarLogoFade">
       <router-link v-if="collapse" key="collapse" class="sidebar-logo-link" to="/">
-        <span class="sidebar-logo-mark">FP</span>
+        <span class="sidebar-logo-mark">先富</span>
       </router-link>
       <router-link v-else key="expand" class="sidebar-logo-link" to="/">
-        <span class="sidebar-logo-mark">FP</span>
+        <span class="sidebar-logo-mark">先富</span>
         <h1 class="sidebar-title">{{ title }}</h1>
       </router-link>
     </transition>
@@ -65,7 +65,7 @@ export default {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
+      width: 36px;
       height: 28px;
       margin-right: 10px;
       border-radius: 6px;
@@ -73,7 +73,7 @@ export default {
       color: #fff;
       font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.5px;
+      letter-spacing: 0;
       flex-shrink: 0;
     }
 

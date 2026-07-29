@@ -42,6 +42,22 @@
         >
           <el-option v-for="item in GroupList" :key="item.id" :value="item.name" />
         </el-select>
+        <el-select
+          v-if="isAdmin"
+          v-model="listQuery.ownerId"
+          filterable
+          clearable
+          class="toolbar-select"
+          :placeholder="$t('browser.ownerFilter')"
+          @change="handleFilter"
+        >
+          <el-option
+            v-for="u in ownerOptions"
+            :key="u.id"
+            :label="u.name || u.username"
+            :value="u.id"
+          />
+        </el-select>
         <el-input
           v-model="listQuery.title"
           class="toolbar-input"
@@ -117,9 +133,19 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="代理" width="140px" show-overflow-tooltip>
+      <el-table-column v-if="isAdmin" :label="$t('browser.owner')" min-width="90px" align="center">
         <template slot-scope="{ row }">
-          <span class="proxy-cell">{{ formatProxyLabel(row) }}</span>
+          <span>{{ ownerDisplayName(row.ownerId) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column
+        :label="$t('browser.shopId')"
+        width="120px"
+        align="center"
+        show-overflow-tooltip
+      >
+        <template slot-scope="{ row }">
+          <span>{{ jddjShopId(row) || '—' }}</span>
         </template>
       </el-table-column>
       <el-table-column
@@ -217,27 +243,46 @@
       <el-table-column
         :label="$t('browser.launch')"
         class-name="status-col"
-        width="220"
+        width="100"
+        align="center"
         fixed="right"
       >
         <template slot-scope="{ row }">
           <el-button
+            v-if="row.isRunning || row.runLoading"
+            type="danger"
+            plain
+            size="mini"
+            icon="el-icon-close"
+            :loading="row.stopLoading"
+            :disabled="
+              !!(row.deleteLoading || row.groupLoading || row.jddjLoading || batchBusy) &&
+              !row.stopLoading
+            "
+            @click="handleStop(row)"
+          >
+            {{ $t('browser.close') }}
+          </el-button>
+          <el-button
+            v-else
             type="primary"
+            size="mini"
             icon="el-icon-video-play"
-            :loading="row.runLoading"
-            :disabled="isRowBusy(row) && !row.runLoading"
+            :disabled="isRowBusy(row)"
             @click="handleLaunch(row)"
           >
-            {{
-              $t(
-                row.runLoading
-                  ? 'browser.launching'
-                  : row.isRunning
-                  ? 'browser.launched'
-                  : 'browser.launch'
-              )
-            }}
+            {{ $t('browser.launch') }}
           </el-button>
+        </template>
+      </el-table-column>
+      <el-table-column
+        :label="$t('browser.actions')"
+        align="center"
+        width="200"
+        fixed="right"
+        class-name="small-padding fixed-width"
+      >
+        <template slot-scope="{ row, $index }">
           <el-button
             v-if="row.isRunning"
             plain
@@ -247,18 +292,8 @@
             :disabled="isRowBusy(row)"
             @click="handleOpenDebug(row)"
           >
-            {{ $t('browser.openDebug') }}
+            {{ $t('browser.debug') }}
           </el-button>
-        </template>
-      </el-table-column>
-      <el-table-column
-        :label="$t('browser.actions')"
-        align="center"
-        width="160"
-        fixed="right"
-        class-name="small-padding fixed-width"
-      >
-        <template slot-scope="{ row, $index }">
           <el-button
             v-permission="['admin', 'operator']"
             plain
@@ -313,6 +348,9 @@
                 <div>
                   <el-form-item :label="$t('browser.name')" prop="name">
                     <el-input v-model="form.name" :placeholder="$t('browser.name_placeholder')" />
+                  </el-form-item>
+                  <el-form-item :label="$t('browser.owner')">
+                    <el-input :value="formOwnerDisplay" disabled />
                   </el-form-item>
                   <el-form-item :label="$t('browser.group')">
                     <el-select v-model="form.group" :placeholder="$t('browser.select')">
@@ -953,6 +991,9 @@ import {
   runJddjFetch,
   ensureEnvInBridge
 } from '@/api/native'
+import { fetchEnvironments } from '@/api/environment'
+import { fetchUserList } from '@/api/system-user'
+import { parseShopIdFromCookies, mergeShopIdIntoSnapshot } from '@lib/jddj-shop-id'
 import { saveAs } from 'file-saver'
 import waves from '@/directive/waves' // waves directive
 import random from 'random'
@@ -1109,8 +1150,9 @@ export default {
         limit: 20,
         title: undefined,
         group: '',
-        sortBy: 'id',
-        sortOrder: 'asc'
+        ownerId: '',
+        sortBy: 'createdAt',
+        sortOrder: 'desc'
       },
       dialogFormVisible: false,
       formSubmitLoading: false,
@@ -1235,12 +1277,28 @@ export default {
         checking: false
       },
       GroupList: [],
-      crxOptions: []
+      crxOptions: [],
+      ownerOptions: []
     }
   },
   computed: {
     language() {
       return this.$store.getters.language
+    },
+    isAdmin() {
+      const roles = this.$store.getters.roles || []
+      return roles.includes('admin')
+    },
+    formOwnerDisplay() {
+      if (this.dialogStatus === 'create') {
+        return this.$store.getters.name || this.$t('browser.ownerCurrent')
+      }
+      const mapped = this.ownerDisplayName(this.form && this.form.ownerId)
+      if (mapped && mapped !== String((this.form && this.form.ownerId) || '')) {
+        return mapped
+      }
+      // operator 无用户列表时，编辑态回退为当前用户名
+      return this.$store.getters.name || mapped || this.$t('browser.ownerUnknown')
     }
   },
   watch: {
@@ -1417,10 +1475,16 @@ export default {
     this.updateTableHeight()
     window.addEventListener('resize', this.updateTableHeight)
     this.GroupList = await getGroupList()
-    this.GroupList.unshift({
-      id: 0,
-      name: this.$t('group.default')
-    })
+    // 后端 listGroupsForUser 已含「默认分组」，避免重复 unshift
+    if (!this.GroupList.some(g => g && g.name === this.$t('group.default'))) {
+      this.GroupList.unshift({
+        id: 0,
+        name: this.$t('group.default')
+      })
+    }
+    if (this.isAdmin) {
+      await this.loadOwnerOptions()
+    }
     this._unsubBrowserExited = onBrowserExited(payload => {
       const id = String((payload && payload.envId) || '')
       if (id && this.list) {
@@ -1462,6 +1526,7 @@ export default {
         row.deleteLoading ||
         row.groupLoading ||
         row.runLoading ||
+        row.stopLoading ||
         row.jddjLoading ||
         this.batchBusy
       )
@@ -1471,11 +1536,15 @@ export default {
     },
     jddjHasSnapshot(row) {
       const snap = this.getJddjSnapshot(row)
-      return !!(snap && (snap.shopName || snap.businessStatus || snap.fetchedAt))
+      return !!(snap && (snap.shopName || snap.shopId || snap.businessStatus || snap.fetchedAt))
     },
     isJddjAutoEnabled(row) {
       if (!row) return false
       return !!(row.autoJddj || row.jddjAutoRefresh)
+    },
+    jddjShopId(row) {
+      const snap = this.getJddjSnapshot(row)
+      return (snap && snap.shopId && String(snap.shopId).trim()) || ''
     },
     jddjShopName(row) {
       const snap = this.getJddjSnapshot(row)
@@ -1492,6 +1561,8 @@ export default {
     },
     jddjSummaryTitle(row) {
       const parts = [this.$t('browser.jddjSummaryTooltip')]
+      const shopId = this.jddjShopId(row)
+      if (shopId) parts.push('门店ID: ' + shopId)
       const status = this.jddjBusinessStatus(row)
       const time = this.jddjFetchedAt(row)
       if (status) parts.push(status)
@@ -1585,6 +1656,7 @@ export default {
       if (row.jddjLoading) return '店铺信息刷新中，请稍候再启动'
       if (row.deleteLoading) return '正在删除该环境'
       if (row.groupLoading) return '正在更新分组'
+      if (row.stopLoading) return '正在关闭中'
       if (row.runLoading) return '正在启动中'
       if (this.batchBusy) return '批量操作进行中，请稍候'
       return ''
@@ -1663,6 +1735,7 @@ export default {
             limit: this.listQuery.limit || 20,
             group: this.listQuery.group || undefined,
             q: title || undefined,
+            ownerId: this.listQuery.ownerId || undefined,
             sortBy: this.listQuery.sortBy || 'id',
             sortOrder: this.listQuery.sortOrder || 'asc'
           }),
@@ -2093,6 +2166,9 @@ export default {
           try {
             this.form.timestamp = Date.now()
             this.preProcessData(this.form)
+            this.attachShopIdFromCookies(this.form)
+            const ok = await this.confirmIfDuplicateShopId(this.form)
+            if (!ok) return
             await addBrowser(this.form, this.$t('browser.browser'))
             await this.getList()
             this.dialogFormVisible = false
@@ -2347,7 +2423,78 @@ export default {
       }
 
       this.preProcessData(item)
+      this.attachShopIdFromCookies(item)
       return item
+    },
+    attachShopIdFromCookies(item) {
+      if (!item || typeof item !== 'object') return item
+      const cookies = (item.cookie && (item.cookie.value || item.cookie.jsonStr)) || null
+      const parsed = parseShopIdFromCookies(cookies)
+      if (!parsed || !parsed.shopId) return item
+      item.siteSnapshot = mergeShopIdIntoSnapshot(
+        item.siteSnapshot,
+        parsed.shopId,
+        parsed.shopIdSource,
+        { preferExisting: true }
+      )
+      return item
+    },
+    async findEnvsByShopId(shopId) {
+      const sid = String(shopId || '').trim()
+      if (!sid) return []
+      try {
+        const res = await fetchEnvironments({ page: 1, limit: 20, shopId: sid })
+        const data = res && res.data
+        if (Array.isArray(data)) return data
+        if (data && Array.isArray(data.items)) return data.items
+      } catch (err) {
+        console.warn('[shopId] duplicate check failed', err)
+      }
+      return []
+    },
+    async confirmIfDuplicateShopId(item, options = {}) {
+      const snap = item && item.siteSnapshot && item.siteSnapshot.jddj
+      const shopId = snap && snap.shopId != null ? String(snap.shopId).trim() : ''
+      if (!shopId) return true
+      const existing = await this.findEnvsByShopId(shopId)
+      const excludeId =
+        options.excludeId != null
+          ? String(options.excludeId)
+          : item && item.id != null
+          ? String(item.id)
+          : ''
+      const others = existing.filter(e => String(e.id) !== excludeId)
+      if (!others.length) return true
+      const ids = others.map(e => e.id).join(', ')
+      try {
+        await this.$confirm(
+          `已存在相同门店 ID（${shopId}），关联环境：${ids}。是否继续？`,
+          '门店 ID 重复提示',
+          {
+            confirmButtonText: '继续',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+        return true
+      } catch {
+        return false
+      }
+    },
+    async loadOwnerOptions() {
+      try {
+        const res = await fetchUserList()
+        this.ownerOptions = res.data || []
+      } catch (err) {
+        console.warn('[owner] load users failed', err)
+        this.ownerOptions = []
+      }
+    },
+    ownerDisplayName(ownerId) {
+      if (!ownerId) return ''
+      const u = (this.ownerOptions || []).find(x => String(x.id) === String(ownerId))
+      if (u) return u.name || u.username || ownerId
+      return String(ownerId)
     },
     handleUpdate(row) {
       this.resetForm()
@@ -2442,7 +2589,11 @@ export default {
     },
     async handleLaunch(row) {
       if (!row) return
-      if (this.isRowBusy(row) && !row.runLoading) {
+      if (row.isRunning || row.runLoading) {
+        this.$message.warning(row.runLoading ? '正在启动中' : '环境已在运行，请先关闭')
+        return
+      }
+      if (this.isRowBusy(row)) {
         this.$message.warning(this.busyReasonText(row) || '当前无法启动，请稍候再试')
         return
       }
@@ -2454,12 +2605,6 @@ export default {
         }
       }
       const id = String(row.id)
-      if (row.isRunning) {
-        this.$message.warning('检测到仍标记为已启动，将强制重新启动')
-        this.$set(row, 'isRunning', false)
-        this.$set(row, 'debuggingPort', null)
-        await chromeSend('stopBrowser', id).catch(() => {})
-      }
       this._launchingIds.add(id)
       this.$set(row, 'runLoading', true)
       // spawn 很快；站点云拉取已从启动路径移除，60s 足够
@@ -2494,6 +2639,30 @@ export default {
         this.$set(row, 'isRunning', false)
         this.$set(row, 'debuggingPort', null)
         this._launchingIds.delete(id)
+      }
+    },
+    async handleStop(row) {
+      if (!row) return
+      if (row.deleteLoading || row.groupLoading || row.jddjLoading || this.batchBusy) {
+        this.$message.warning(this.busyReasonText(row) || '当前无法关闭，请稍候再试')
+        return
+      }
+      const id = String(row.id)
+      this.$set(row, 'stopLoading', true)
+      try {
+        await chromeSendTimeout('stopBrowser', 15000, id).catch(() => chromeSend('stopBrowser', id))
+        this.$set(row, 'isRunning', false)
+        this.$set(row, 'runLoading', false)
+        this.$set(row, 'debuggingPort', null)
+        this._launchingIds.delete(id)
+        await updateRuningState()
+      } catch (err) {
+        console.warn('[stopBrowser]', err)
+        this.$message.error(
+          '关闭失败: ' + this.stripIpcErrorPrefix(err && err.message ? err.message : String(err))
+        )
+      } finally {
+        this.$set(row, 'stopLoading', false)
       }
     },
     async handleOpenDebug(row) {
@@ -2562,6 +2731,12 @@ export default {
             .filter(Boolean)
           await this.ensureGroupsExist(groupNames)
           const items = json.map(item => this.normalizeImportItem(item))
+          for (const item of items) {
+            const ok = await this.confirmIfDuplicateShopId(item)
+            if (!ok) {
+              throw new Error('已取消导入（门店 ID 重复）')
+            }
+          }
           const { created } = await batchAddBrowsers(items, this.$t('browser.browser'))
           const count = (created && created.length) || items.length
 
@@ -2592,7 +2767,10 @@ export default {
     },
     async reloadGroupList() {
       const list = await getGroupList()
-      this.GroupList = [{ id: 0, name: this.$t('group.default') }, ...list]
+      const defaultName = this.$t('group.default')
+      const rest = (list || []).filter(g => !(g && g.name === defaultName))
+      const hasDefault = (list || []).some(g => g && g.name === defaultName)
+      this.GroupList = hasDefault ? list.slice() : [{ id: 0, name: defaultName }, ...rest]
     },
     async ensureGroupsExist(names) {
       const defaultName = this.$t('group.default')
@@ -3149,6 +3327,12 @@ export default {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+.jddj-shop-id {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #909399;
 }
 
 .jddj-status-inline {

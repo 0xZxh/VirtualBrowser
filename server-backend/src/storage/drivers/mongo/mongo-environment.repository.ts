@@ -8,6 +8,7 @@ import {
   EnvironmentPageOptions,
   EnvironmentRepository
 } from '../../interfaces/environment.repository'
+import { DEFAULT_GROUP_NAME, isDefaultGroupFilter } from '../../group-filter.util'
 
 @Injectable()
 export class MongoEnvironmentRepository implements EnvironmentRepository {
@@ -127,14 +128,40 @@ export class MongoEnvironmentRepository implements EnvironmentRepository {
     const query: FilterQuery<EnvironmentDocument> = {}
     if (filter.tenantId) query.tenantId = filter.tenantId
     if (filter.ownerId) query.ownerId = filter.ownerId
-    if (filter.group) query.group = filter.group
+    const and: FilterQuery<EnvironmentDocument>[] = []
+    if (filter.group) {
+      if (isDefaultGroupFilter(filter.group)) {
+        and.push({
+          $or: [
+            { group: '' },
+            { group: DEFAULT_GROUP_NAME },
+            { group: { $exists: false } },
+            { group: null as unknown as string }
+          ]
+        })
+      } else {
+        query.group = filter.group
+      }
+    }
+    const shopIdFilter = filter.shopId != null ? String(filter.shopId).trim() : ''
+    if (shopIdFilter) {
+      query['payload.siteSnapshot.jddj.shopId'] = shopIdFilter
+    }
     const q = filter.q != null ? String(filter.q).trim() : ''
     if (q) {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      query.$or = [
-        { name: { $regex: escaped, $options: 'i' } },
-        { envId: { $regex: escaped, $options: 'i' } }
-      ]
+      and.push({
+        $or: [
+          { name: { $regex: escaped, $options: 'i' } },
+          { envId: { $regex: escaped, $options: 'i' } },
+          { 'payload.siteSnapshot.jddj.shopId': { $regex: escaped, $options: 'i' } }
+        ]
+      })
+    }
+    if (and.length === 1) {
+      Object.assign(query, and[0])
+    } else if (and.length > 1) {
+      query.$and = and
     }
     return query
   }

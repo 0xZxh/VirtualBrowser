@@ -44,7 +44,7 @@
           <span>{{ row.name }}</span>
         </template>
       </el-table-column>
-      <el-table-column :label="$t('group.browser_count')" width="200px">
+      <el-table-column :label="$t('group.browser_count')" prop="count" sortable width="200px">
         <template slot-scope="{ row }">
           <span>
             {{ row.count }}
@@ -116,10 +116,8 @@
 </template>
 
 <script>
-import { getBrowserList, getGroupList, addGroup, updateGroup, deleteGroup } from '@/api/native'
+import { getGroupList, addGroup, updateGroup, deleteGroup } from '@/api/native'
 import waves from '@/directive/waves' // waves directive
-
-let browserList
 
 export default {
   name: 'ComplexTable',
@@ -158,17 +156,23 @@ export default {
   watch: {},
   beforeCreate() {},
   async created() {
-    browserList = await getBrowserList()
     await this.getList()
   },
   mounted() {},
   methods: {
     async _getGroupList() {
+      // 登录后走 /api/groups，后端已附带 count；默认按浏览器数量降序
       const list = await getGroupList()
-      list.forEach(item => {
-        item.count = browserList.filter(b => b.group === item.name).length
-      })
-      return list
+      return (list || [])
+        .map(item => ({
+          ...item,
+          count: item.count != null ? Number(item.count) : 0
+        }))
+        .sort((a, b) => {
+          const diff = (Number(b.count) || 0) - (Number(a.count) || 0)
+          if (diff !== 0) return diff
+          return (Number(a.id) || 0) - (Number(b.id) || 0)
+        })
     },
     async getList() {
       this.listLoading = true

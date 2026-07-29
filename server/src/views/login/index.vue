@@ -1,7 +1,7 @@
 <template>
   <div class="login-container">
     <div class="login-brand">
-      <span class="login-brand-mark">FP</span>
+      <span class="login-brand-mark">先富</span>
       <h1 class="login-brand-title">{{ $t('login.title') }}</h1>
       <p class="login-brand-subtitle">{{ $t('login.subtitle') }}</p>
     </div>
@@ -93,8 +93,8 @@ export default {
     }
     return {
       loginForm: {
-        username: 'admin',
-        password: 'admin123'
+        username: '',
+        password: ''
       },
       loginRules: {
         username: [{ required: true, trigger: 'blur', validator: validateUsername }],
@@ -238,14 +238,15 @@ $light_gray: #e2e8f0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 56px;
+      min-width: 56px;
       height: 56px;
+      padding: 0 10px;
       border-radius: 14px;
       background: linear-gradient(135deg, #0ea5e9, #0284c7);
       color: #fff;
-      font-size: 20px;
+      font-size: 16px;
       font-weight: 700;
-      letter-spacing: 1px;
+      letter-spacing: 0;
       margin-bottom: 16px;
       box-shadow: 0 8px 24px rgba(14, 165, 233, 0.35);
     }

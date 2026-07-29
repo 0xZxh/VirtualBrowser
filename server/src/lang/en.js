@@ -33,7 +33,7 @@ export default {
     size: 'Global Size'
   },
   login: {
-    title: 'Fingerprint Browser Console',
+    title: 'XianFu',
     subtitle: 'Secure isolation · Multi-account management',
     logIn: 'Login',
     username: 'Username',
@@ -53,7 +53,12 @@ export default {
     name: 'Name',
     browser: 'Browser',
     name_placeholder: 'Please enter browser name',
-    search_placeholder: 'Name / ID',
+    search_placeholder: 'Name / ID / Shop ID',
+    group: 'Group',
+    owner: 'Owner',
+    ownerFilter: 'Filter by owner',
+    ownerCurrent: 'Current user',
+    ownerUnknown: 'Unknown',
     search: 'Search',
     import: {
       import: 'Import',
@@ -65,7 +70,10 @@ export default {
     launch: 'Launch',
     launching: 'Launching',
     launched: 'Launched',
+    close: 'Close',
     openDebug: 'Open Debug',
+    debug: 'Debug',
+    shopId: 'Shop ID',
     edit: 'Edit',
     delete: 'Delete',
     cloudSync: 'Cloud Sync',

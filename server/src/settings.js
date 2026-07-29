@@ -1,5 +1,5 @@
 module.exports = {
-  title: '指纹浏览器控制台',
+  title: '先富',
 
   /**
    * @type {boolean} true | false

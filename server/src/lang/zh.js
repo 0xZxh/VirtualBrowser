@@ -34,7 +34,7 @@ export default {
     size: '布局大小'
   },
   login: {
-    title: '指纹浏览器控制台',
+    title: '先富',
     subtitle: '安全隔离 · 多账号管理',
     logIn: '登录',
     username: '账号',
@@ -53,8 +53,12 @@ export default {
     name: '名称',
     browser: '浏览器',
     name_placeholder: '请输入浏览器名称',
-    search_placeholder: '名称 / ID',
+    search_placeholder: '名称 / ID / 门店ID',
     group: '选择分组',
+    owner: '归属用户',
+    ownerFilter: '按归属用户筛选',
+    ownerCurrent: '当前用户',
+    ownerUnknown: '未知',
     search: '搜索',
     import: {
       import: '导入',
@@ -66,7 +70,10 @@ export default {
     launch: '启动',
     launching: '启动中',
     launched: '已启动',
+    close: '关闭',
     openDebug: '打开调试',
+    debug: '调试',
+    shopId: '店铺ID',
     edit: '编辑',
     delete: '删除',
     cloudSync: '云同步',

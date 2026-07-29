@@ -92,19 +92,29 @@ export class EnvironmentsService {
       q?: string
       sortBy?: string
       sortOrder?: string
+      shopId?: string
+      ownerId?: string
     }
   ): Promise<{ items: BrowserEnvironmentItem[]; total: number }> {
     const page = Math.max(1, Number(query.page) || 1)
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
     const group = query.group != null ? String(query.group).trim() : ''
     const q = query.q != null ? String(query.q).trim() : ''
+    const shopId = query.shopId != null ? String(query.shopId).trim() : ''
+    const ownerIdQuery = query.ownerId != null ? String(query.ownerId).trim() : ''
     const sortBy = query.sortBy === 'createdAt' ? 'createdAt' : 'id'
     const sortOrder = query.sortOrder === 'desc' ? 'desc' : 'asc'
 
     const filter = {
-      ...(this.isAdmin(user) ? { tenantId: user.tenantId } : { ownerId: user.id }),
+      ...(this.isAdmin(user)
+        ? {
+            tenantId: user.tenantId,
+            ...(ownerIdQuery ? { ownerId: ownerIdQuery } : {})
+          }
+        : { ownerId: user.id }),
       ...(group ? { group } : {}),
-      ...(q ? { q } : {})
+      ...(q ? { q } : {}),
+      ...(shopId ? { shopId } : {})
     }
 
     const [records, total] = await Promise.all([
@@ -118,6 +128,25 @@ export class EnvironmentsService {
     ])
 
     return { items: records.map(toBrowserItem), total }
+  }
+
+  /** Lightweight list for admin assign-browsers dialog (no fingerprint/cookie payload). */
+  async listAssignOptions(
+    user: UserRecord
+  ): Promise<Array<{ id: string | number; name: string; group: string; ownerId: string }>> {
+    if (!this.isAdmin(user)) {
+      throw new ForbiddenException({ code: 403, message: '仅管理员可获取分配选项' })
+    }
+    const records = await this.envRepository.findByTenant(user.tenantId)
+    return records.map(r => {
+      const numericId = Number(r.envId)
+      return {
+        id: Number.isFinite(numericId) ? numericId : r.envId,
+        name: r.name,
+        group: r.group,
+        ownerId: r.ownerId
+      }
+    })
   }
 
   async getOne(user: UserRecord, envId: string): Promise<BrowserEnvironmentItem> {

@@ -1,8 +1,8 @@
 <template>
   <section class="container">
     <header>
-      <img src="./assets/logo.svg" alt="指纹浏览器" class="brand-logo" />
-      <h1>指纹浏览器</h1>
+      <img src="./assets/logo.svg" alt="先富" class="brand-logo" />
+      <h1>先富</h1>
     </header>
     <main>
       <div v-if="previewMode" class="preview-banner">

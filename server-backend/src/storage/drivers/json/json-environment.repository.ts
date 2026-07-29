@@ -5,6 +5,7 @@ import {
   EnvironmentPageOptions,
   EnvironmentRepository
 } from '../../interfaces/environment.repository'
+import { extractJddjShopId, matchesGroupFilter } from '../../group-filter.util'
 import { JsonEnvironmentRow, JsonStoreService } from './json-store.service'
 
 @Injectable()
@@ -102,14 +103,18 @@ export class JsonEnvironmentRepository implements EnvironmentRepository {
     desc = false
   ): JsonEnvironmentRow[] {
     const q = filter.q != null ? String(filter.q).trim().toLowerCase() : ''
+    const shopIdFilter = filter.shopId != null ? String(filter.shopId).trim() : ''
     const rows = this.store.readEnvironments().filter(row => {
       if (filter.tenantId && row.tenantId !== filter.tenantId) return false
       if (filter.ownerId && row.ownerId !== filter.ownerId) return false
-      if (filter.group && row.group !== filter.group) return false
+      if (filter.group && !matchesGroupFilter(row.group, filter.group)) return false
+      const rowShopId = extractJddjShopId(row.payload || {})
+      if (shopIdFilter && rowShopId !== shopIdFilter) return false
       if (q) {
         const name = String(row.name || '').toLowerCase()
         const envId = String(row.envId || '').toLowerCase()
-        if (!name.includes(q) && !envId.includes(q)) return false
+        const shopId = rowShopId.toLowerCase()
+        if (!name.includes(q) && !envId.includes(q) && !shopId.includes(q)) return false
       }
       return true
     })

@@ -8,6 +8,15 @@ export function fetchEnvironments(params = {}) {
   })
 }
 
+/** 分配浏览器弹窗：仅 id/name/group/ownerId，无重 payload */
+export function fetchAssignOptions() {
+  return request({
+    url: '/api/environments/assign-options',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
 export function fetchEnvironment(envId) {
   return request({
     url: `/api/environments/${envId}`,

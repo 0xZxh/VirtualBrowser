@@ -3,10 +3,13 @@
  */
 const cdpNavigate = require('./cdp-navigate')
 const selectors = require('./jddj-selectors')
+const { extractShopIdFromPayload } = require('./jddj-shop-id')
 
 function emptyResult(partial = {}) {
   return {
     shopName: null,
+    shopId: null,
+    shopIdSource: null,
     businessStatus: '未知',
     orders: [],
     fetchedAt: new Date().toISOString(),
@@ -88,6 +91,8 @@ function mapOrderRow(raw) {
 function extractFromJsonPayload(data) {
   const out = {
     shopName: null,
+    shopId: null,
+    shopIdSource: null,
     businessStatus: null,
     orders: []
   }
@@ -108,6 +113,21 @@ function extractFromJsonPayload(data) {
         obj.merchantName,
         obj.name
       )
+    }
+    if (!out.shopId) {
+      const sid = pickString(
+        obj.shopId,
+        obj.storeId,
+        obj.stationId,
+        obj.stationNo,
+        obj.venderId,
+        obj.orgCode,
+        obj.merchantId
+      )
+      if (sid) {
+        out.shopId = sid
+        out.shopIdSource = 'xhr'
+      }
     }
     if (!out.businessStatus || out.businessStatus === '未知') {
       const st = pickString(
@@ -131,6 +151,13 @@ function extractFromJsonPayload(data) {
   }
 
   dig(data)
+  if (!out.shopId) {
+    const found = extractShopIdFromPayload(data)
+    if (found.shopId) {
+      out.shopId = found.shopId
+      out.shopIdSource = found.shopIdSource || 'xhr'
+    }
+  }
   return out
 }
 
@@ -156,6 +183,10 @@ function tryParseJson(text) {
 function mergeExtract(target, part) {
   if (!part) return target
   if (part.shopName && !target.shopName) target.shopName = part.shopName
+  if (part.shopId && !target.shopId) {
+    target.shopId = part.shopId
+    target.shopIdSource = part.shopIdSource || target.shopIdSource || null
+  }
   if (part.businessStatus && part.businessStatus !== '未知') {
     if (!target.businessStatus || target.businessStatus === '未知') {
       target.businessStatus = part.businessStatus
@@ -252,6 +283,8 @@ async function scrapeJddj(port, options = {}) {
   const fetchedAt = new Date().toISOString()
   const merged = {
     shopName: null,
+    shopId: null,
+    shopIdSource: null,
     businessStatus: '未知',
     orders: []
   }
@@ -282,6 +315,8 @@ async function scrapeJddj(port, options = {}) {
       const part = extractFromJsonPayload(json)
       mergeExtract(merged, {
         shopName: part.shopName,
+        shopId: part.shopId,
+        shopIdSource: part.shopIdSource,
         businessStatus: part.businessStatus || null,
         orders: part.orders
       })
@@ -331,6 +366,7 @@ async function scrapeJddj(port, options = {}) {
 
     const hasSignal =
       !!merged.shopName ||
+      !!merged.shopId ||
       (merged.businessStatus && merged.businessStatus !== '未知') ||
       (merged.orders && merged.orders.length > 0)
 
@@ -344,6 +380,8 @@ async function scrapeJddj(port, options = {}) {
 
     return {
       shopName: merged.shopName,
+      shopId: merged.shopId || null,
+      shopIdSource: merged.shopIdSource || null,
       businessStatus: normalizeBusinessStatus(merged.businessStatus),
       orders: merged.orders || [],
       fetchedAt,

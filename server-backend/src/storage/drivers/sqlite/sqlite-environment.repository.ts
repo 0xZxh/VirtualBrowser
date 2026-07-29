@@ -5,6 +5,10 @@ import {
   EnvironmentPageOptions,
   EnvironmentRepository
 } from '../../interfaces/environment.repository'
+import {
+  DEFAULT_GROUP_NAME,
+  isDefaultGroupFilter
+} from '../../group-filter.util'
 import { SqliteDatabaseService } from './sqlite-database.service'
 
 interface EnvironmentRow {
@@ -164,14 +168,26 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
       params.push(filter.ownerId)
     }
     if (filter.group) {
-      parts.push('group_name = ?')
-      params.push(filter.group)
+      if (isDefaultGroupFilter(filter.group)) {
+        parts.push("(group_name = ? OR group_name = '' OR group_name IS NULL)")
+        params.push(DEFAULT_GROUP_NAME)
+      } else {
+        parts.push('group_name = ?')
+        params.push(filter.group)
+      }
+    }
+    const shopIdFilter = filter.shopId != null ? String(filter.shopId).trim() : ''
+    if (shopIdFilter) {
+      parts.push(`json_extract(payload, '$.siteSnapshot.jddj.shopId') = ?`)
+      params.push(shopIdFilter)
     }
     const q = filter.q != null ? String(filter.q).trim() : ''
     if (q) {
-      parts.push('(name LIKE ? OR env_id LIKE ?)')
+      parts.push(
+        `(name LIKE ? OR env_id LIKE ? OR IFNULL(json_extract(payload, '$.siteSnapshot.jddj.shopId'), '') LIKE ?)`
+      )
       const like = `%${q}%`
-      params.push(like, like)
+      params.push(like, like, like)
     }
     return {
       sql: parts.length ? `WHERE ${parts.join(' AND ')}` : '',

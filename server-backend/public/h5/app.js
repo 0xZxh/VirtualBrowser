@@ -197,6 +197,10 @@
     createView.classList.remove('hidden')
     userBar.classList.remove('hidden')
     userNameEl.textContent = (user && (user.name || user.username)) || '已登录'
+    const ownerEl = $('envOwner')
+    if (ownerEl) {
+      ownerEl.value = (user && (user.name || user.username)) || '当前用户'
+    }
     if (!$('envHomepage').value) {
       $('envHomepage').value = DEFAULT_HOME
     }

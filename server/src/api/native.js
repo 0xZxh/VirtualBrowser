@@ -1,5 +1,6 @@
 import { v4 as uuid_v4 } from 'uuid'
 import { getToken } from '@/utils/auth'
+import request from '@/utils/request'
 import {
   batchCreateEnvironments,
   batchDeleteEnvironments,
@@ -259,6 +260,8 @@ async function fetchPageFromBackend(query = {}) {
   if (query.q) params.q = query.q
   if (query.sortBy) params.sortBy = query.sortBy
   if (query.sortOrder) params.sortOrder = query.sortOrder
+  if (query.shopId) params.shopId = query.shopId
+  if (query.ownerId) params.ownerId = query.ownerId
   const res = await fetchEnvironments(params)
   return parsePagePayload(res.data)
 }
@@ -371,14 +374,46 @@ export async function getBrowserListPage(query = {}) {
     const group = query.group != null ? String(query.group).trim() : ''
     const q = query.q != null ? String(query.q).trim() : ''
     if (group) {
-      next = next.filter(item => item.group === group)
+      const DEFAULT_GROUP = '默认分组'
+      next = next.filter(item => {
+        const g = String(item.group == null ? '' : item.group).trim()
+        if (group === DEFAULT_GROUP) {
+          return g === '' || g === DEFAULT_GROUP
+        }
+        return g === group
+      })
+    }
+    const ownerId = query.ownerId != null ? String(query.ownerId).trim() : ''
+    if (ownerId) {
+      next = next.filter(item => String(item.ownerId || '') === ownerId)
+    }
+    const shopId = query.shopId != null ? String(query.shopId).trim() : ''
+    if (shopId) {
+      next = next.filter(item => {
+        const sid = String(
+          (item.siteSnapshot && item.siteSnapshot.jddj && item.siteSnapshot.jddj.shopId) || ''
+        ).trim()
+        return sid === shopId
+      })
     }
     if (q) {
       const lower = q.toLowerCase()
       next = next.filter(item => {
         const name = String(item.name == null ? '' : item.name).toLowerCase()
         const id = String(item.id == null ? '' : item.id)
-        return id === q || id.toLowerCase() === lower || name.includes(lower) || id.toLowerCase().includes(lower)
+        const itemShopId = String(
+          (item.siteSnapshot &&
+            item.siteSnapshot.jddj &&
+            item.siteSnapshot.jddj.shopId) ||
+            ''
+        ).toLowerCase()
+        return (
+          id === q ||
+          id.toLowerCase() === lower ||
+          name.includes(lower) ||
+          id.toLowerCase().includes(lower) ||
+          (itemShopId && itemShopId.includes(lower))
+        )
       })
     }
     const { sortBy, sortOrder } = normalizeListSort(query)
@@ -840,6 +875,14 @@ export async function saveEnvironmentSiteSnapshot(envId, data) {
 }
 
 export async function getGroupList() {
+  if (getToken()) {
+    const res = await request({
+      url: '/api/groups',
+      method: 'get'
+    })
+    return (res && res.data) || []
+  }
+
   let list
   try {
     list = JSON.parse(localStorage.getItem('group'))
@@ -850,8 +893,23 @@ export async function getGroupList() {
   return list || []
 }
 export async function addGroup(item, defaultName) {
+  if (getToken()) {
+    let name = String((item && item.name) || '').trim()
+    if (!name) {
+      const list = await getGroupList()
+      const maxId = Math.max(0, ...list.map(g => Number(g.id) || 0))
+      name = (defaultName || '分组') + ' ' + (maxId + 1)
+    }
+    const res = await request({
+      url: '/api/groups',
+      method: 'post',
+      data: { name }
+    })
+    return (res && res.data) || { name }
+  }
+
   const list = await getGroupList()
-  const maxId = Math.max(0, Math.max(...list.map(item => item.id)))
+  const maxId = Math.max(0, Math.max(...list.map(it => it.id)))
   item.id = maxId + 1
   item.name = item.name || defaultName + ' ' + item.id
 
@@ -860,6 +918,15 @@ export async function addGroup(item, defaultName) {
   localStorage.setItem('group', JSON.stringify(list))
 }
 export async function updateGroup(item) {
+  if (getToken()) {
+    await request({
+      url: `/api/groups/${item.id}`,
+      method: 'put',
+      data: { name: item.name }
+    })
+    return item
+  }
+
   const list = await getGroupList()
   const idx = list.findIndex(it => it.id === item.id)
   list[idx] = item
@@ -867,6 +934,14 @@ export async function updateGroup(item) {
   localStorage.setItem('group', JSON.stringify(list))
 }
 export async function deleteGroup(id) {
+  if (getToken()) {
+    await request({
+      url: `/api/groups/${id}`,
+      method: 'delete'
+    })
+    return
+  }
+
   const list = await getGroupList()
   const idx = list.findIndex(it => it.id === id)
 

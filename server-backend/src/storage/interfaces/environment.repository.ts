@@ -3,10 +3,12 @@ import { EnvironmentRecord } from '../../environments/environment.types'
 export type EnvironmentListFilter = {
   tenantId?: string
   ownerId?: string
-  /** Exact group name; empty/undefined = all */
+  /** Exact group name; empty/undefined = all.「默认分组」also matches empty group. */
   group?: string
-  /** Match name or envId (substring, case-insensitive for name) */
+  /** Match name, envId, or jddj shopId (substring) */
   q?: string
+  /** Exact match on payload.siteSnapshot.jddj.shopId */
+  shopId?: string
 }
 
 export type EnvironmentPageOptions = {
