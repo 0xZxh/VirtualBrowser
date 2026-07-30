@@ -4,6 +4,8 @@ import { FilterQuery, Model } from 'mongoose'
 import { Environment, EnvironmentDocument } from '../../../environments/environment.schema'
 import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
+  EnvironmentGroupCount,
+  EnvironmentGroupCountFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -72,6 +74,27 @@ export class MongoEnvironmentRepository implements EnvironmentRepository {
 
   async count(filter: EnvironmentListFilter): Promise<number> {
     return this.envModel.countDocuments(this.buildQuery(filter))
+  }
+
+  async countByGroup(
+    filter: EnvironmentGroupCountFilter
+  ): Promise<EnvironmentGroupCount[]> {
+    const match: FilterQuery<EnvironmentDocument> = {}
+    if (filter.tenantId) match.tenantId = filter.tenantId
+    if (filter.ownerId) match.ownerId = filter.ownerId
+    const rows = await this.envModel.aggregate<{ _id: string | null; count: number }>([
+      { $match: match },
+      {
+        $group: {
+          _id: { $ifNull: ['$group', ''] },
+          count: { $sum: 1 }
+        }
+      }
+    ])
+    return rows.map(r => ({
+      group: String(r._id || '').trim(),
+      count: Number(r.count) || 0
+    }))
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {

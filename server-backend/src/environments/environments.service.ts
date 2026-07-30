@@ -37,13 +37,16 @@ export class EnvironmentsService {
     return addGroup(next)
   }
 
-  /** Groups from catalog + names used by user's environments. */
+  /** Groups from catalog + names used by user's environments (aggregate counts, no payload). */
   async listGroupsForUser(user: UserRecord): Promise<Array<{ id: number; name: string; count: number }>> {
-    const items = await this.listForUser(user)
+    const filter = this.isAdmin(user)
+      ? { tenantId: user.tenantId }
+      : { ownerId: user.id }
+    const rows = await this.envRepository.countByGroup(filter)
     const counts = new Map<string, number>()
-    for (const item of items) {
-      const g = String(item.group || '').trim() || DEFAULT_GROUP_NAME
-      counts.set(g, (counts.get(g) || 0) + 1)
+    for (const row of rows) {
+      const g = String(row.group || '').trim() || DEFAULT_GROUP_NAME
+      counts.set(g, (counts.get(g) || 0) + (Number(row.count) || 0))
     }
 
     const byName = new Map<string, { id: number; name: string; count: number }>()

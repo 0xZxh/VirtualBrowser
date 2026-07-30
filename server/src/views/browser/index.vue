@@ -1423,13 +1423,13 @@ export default {
     }
 
     if (this.apiLink) {
-      const res = await fetch(this.apiLink)
+      // 不阻塞 created 后续（版本检查等）；与 listLoading 无关
+      fetch(this.apiLink)
         .then(req => req.json())
+        .then(res => {
+          if (res) IPGeo = res
+        })
         .catch(console.warn)
-
-      if (res) {
-        IPGeo = res
-      }
     }
 
     fontList = getFontList()

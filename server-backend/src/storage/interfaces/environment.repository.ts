@@ -20,6 +20,17 @@ export type EnvironmentPageOptions = {
   sortOrder?: 'asc' | 'desc'
 }
 
+/** Lightweight group counts for /api/groups (no payload). */
+export type EnvironmentGroupCountFilter = {
+  tenantId?: string
+  ownerId?: string
+}
+
+export type EnvironmentGroupCount = {
+  group: string
+  count: number
+}
+
 export interface EnvironmentRepository {
   findByTenant(tenantId: string): Promise<EnvironmentRecord[]>
   findByOwner(ownerId: string): Promise<EnvironmentRecord[]>
@@ -30,6 +41,8 @@ export interface EnvironmentRepository {
     options: EnvironmentPageOptions
   ): Promise<EnvironmentRecord[]>
   count(filter: EnvironmentListFilter): Promise<number>
+  /** Aggregate counts by group field; empty group normalized by caller or as ''. */
+  countByGroup(filter: EnvironmentGroupCountFilter): Promise<EnvironmentGroupCount[]>
   /** Max numeric envId for tenant; 0 if none */
   getMaxEnvId(tenantId: string): Promise<number>
   create(record: EnvironmentRecord): Promise<EnvironmentRecord>

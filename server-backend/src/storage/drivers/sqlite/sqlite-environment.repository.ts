@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common'
 import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
+  EnvironmentGroupCount,
+  EnvironmentGroupCountFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -85,6 +87,34 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
       .prepare(`SELECT COUNT(*) AS c FROM environments ${sql}`)
       .get(...params) as { c: number }
     return Number(row?.c) || 0
+  }
+
+  async countByGroup(
+    filter: EnvironmentGroupCountFilter
+  ): Promise<EnvironmentGroupCount[]> {
+    const parts: string[] = []
+    const params: unknown[] = []
+    if (filter.tenantId) {
+      parts.push('tenant_id = ?')
+      params.push(filter.tenantId)
+    }
+    if (filter.ownerId) {
+      parts.push('owner_id = ?')
+      params.push(filter.ownerId)
+    }
+    const where = parts.length ? `WHERE ${parts.join(' AND ')}` : ''
+    const rows = this.sqlite
+      .getDb()
+      .prepare(
+        `SELECT IFNULL(group_name, '') AS g, COUNT(*) AS c
+         FROM environments ${where}
+         GROUP BY IFNULL(group_name, '')`
+      )
+      .all(...params) as Array<{ g: string; c: number }>
+    return rows.map(r => ({
+      group: String(r.g || '').trim(),
+      count: Number(r.c) || 0
+    }))
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {

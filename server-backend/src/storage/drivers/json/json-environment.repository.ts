@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common'
 import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
+  EnvironmentGroupCount,
+  EnvironmentGroupCountFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -54,6 +56,19 @@ export class JsonEnvironmentRepository implements EnvironmentRepository {
 
   async count(filter: EnvironmentListFilter): Promise<number> {
     return this.filterRows(filter).length
+  }
+
+  async countByGroup(
+    filter: EnvironmentGroupCountFilter
+  ): Promise<EnvironmentGroupCount[]> {
+    const counts = new Map<string, number>()
+    for (const row of this.store.readEnvironments()) {
+      if (filter.tenantId && row.tenantId !== filter.tenantId) continue
+      if (filter.ownerId && row.ownerId !== filter.ownerId) continue
+      const g = String(row.group || '').trim()
+      counts.set(g, (counts.get(g) || 0) + 1)
+    }
+    return Array.from(counts.entries()).map(([group, count]) => ({ group, count }))
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {
