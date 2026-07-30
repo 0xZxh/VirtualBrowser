@@ -8,11 +8,12 @@ export function fetchEnvironments(params = {}) {
   })
 }
 
-/** 分配浏览器弹窗：仅 id/name/group/ownerId，无重 payload */
-export function fetchAssignOptions() {
+/** 分配浏览器弹窗：轻量分页，仅 id/name/group/ownerId/createdAt */
+export function fetchAssignOptions(params = {}) {
   return request({
     url: '/api/environments/assign-options',
     method: 'get',
+    params,
     timeout: 60000
   })
 }

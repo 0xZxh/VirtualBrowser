@@ -180,12 +180,15 @@ function tryParseJson(text) {
   }
 }
 
-function mergeExtract(target, part) {
+function mergeExtract(target, part, options = {}) {
   if (!part) return target
+  const preferPartShopId = options.preferPartShopId === true
   if (part.shopName && !target.shopName) target.shopName = part.shopName
-  if (part.shopId && !target.shopId) {
-    target.shopId = part.shopId
-    target.shopIdSource = part.shopIdSource || target.shopIdSource || null
+  if (part.shopId) {
+    if (preferPartShopId || !target.shopId) {
+      target.shopId = part.shopId
+      target.shopIdSource = part.shopIdSource || target.shopIdSource || null
+    }
   }
   if (part.businessStatus && part.businessStatus !== '未知') {
     if (!target.businessStatus || target.businessStatus === '未知') {
@@ -199,7 +202,7 @@ function mergeExtract(target, part) {
 }
 
 /**
- * DOM 兜底：在页面执行选择器脚本。
+ * DOM 兜底：在页面执行选择器脚本，并读取 localStorage.shopInfo。
  */
 function buildDomEvalScript() {
   const shopSels = JSON.stringify(selectors.DOM.shopName)
@@ -233,6 +236,28 @@ function buildDomEvalScript() {
       if(/营业中/.test(bodyText)) businessStatus='营业中';
       else if(/休息中|打烊|暂停营业/.test(bodyText)) businessStatus='休息中';
     }
+    var shopId=null;
+    var shopIdSource=null;
+    var lsShopName=null;
+    try{
+      var raw=localStorage.getItem('shopInfo');
+      if(raw){
+        var info=JSON.parse(raw);
+        if(info && typeof info==='object'){
+          var sid=String(info.stationNo||info.shopId||info.storeId||'').trim();
+          if(sid){
+            shopId=sid;
+            shopIdSource='localStorage:shopInfo';
+          }
+          var sn=String(info.shopName||info.storeName||info.stationName||'').trim();
+          if(sn) lsShopName=sn;
+          var st=String(info.shopStatus||info.businessStatus||'').trim();
+          if(st==='0'||st==='营业中'||/营业/.test(st)) businessStatus=businessStatus||'营业中';
+          else if(st==='1'||/休息|打烊/.test(st)) businessStatus=businessStatus||'休息中';
+        }
+      }
+    }catch(e){}
+    if(!shopName && lsShopName) shopName=lsShopName;
     var orders=[];
     var orderSels=${orderSels};
     for(var oi=0;oi<orderSels.length;oi++){
@@ -264,6 +289,8 @@ function buildDomEvalScript() {
     }
     return {
       shopName: shopName||null,
+      shopId: shopId,
+      shopIdSource: shopIdSource,
       businessStatus: businessStatus||null,
       orders: orders,
       looksLogin: looksLogin,
@@ -334,7 +361,7 @@ async function scrapeJddj(port, options = {}) {
     }
 
     if (dom) {
-      if (dom.looksLogin && !merged.shopName && !merged.orders.length) {
+      if (dom.looksLogin && !merged.shopName && !merged.shopId && !merged.orders.length) {
         return emptyResult({
           fetchedAt,
           ok: false,
@@ -342,26 +369,33 @@ async function scrapeJddj(port, options = {}) {
           businessStatus: '未知'
         })
       }
-      mergeExtract(merged, {
-        shopName: dom.shopName,
-        businessStatus: dom.businessStatus
-          ? normalizeBusinessStatus(dom.businessStatus)
-          : null,
-        orders: Array.isArray(dom.orders)
-          ? dom.orders
-              .map(o =>
-                o && o.orderId
-                  ? {
-                      orderId: String(o.orderId),
-                      status: String(o.status || ''),
-                      amount: String(o.amount || ''),
-                      createdAt: String(o.createdAt || '')
-                    }
-                  : null
-              )
-              .filter(Boolean)
-          : []
-      })
+      // localStorage shopInfo 优先于 XHR
+      mergeExtract(
+        merged,
+        {
+          shopName: dom.shopName,
+          shopId: dom.shopId,
+          shopIdSource: dom.shopIdSource,
+          businessStatus: dom.businessStatus
+            ? normalizeBusinessStatus(dom.businessStatus)
+            : null,
+          orders: Array.isArray(dom.orders)
+            ? dom.orders
+                .map(o =>
+                  o && o.orderId
+                    ? {
+                        orderId: String(o.orderId),
+                        status: String(o.status || ''),
+                        amount: String(o.amount || ''),
+                        createdAt: String(o.createdAt || '')
+                      }
+                    : null
+                )
+                .filter(Boolean)
+            : []
+        },
+        { preferPartShopId: !!(dom.shopId && String(dom.shopIdSource || '').includes('localStorage')) }
+      )
     }
 
     const hasSignal =

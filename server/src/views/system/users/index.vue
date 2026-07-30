@@ -86,12 +86,24 @@
     <el-dialog
       :title="$t('systemUser.assignBrowsersTitle')"
       :visible.sync="assignDialogVisible"
-      width="560px"
+      width="640px"
     >
       <p class="assign-hint">{{ $t('systemUser.assignBrowsersHint') }}</p>
       <p v-if="assignTargetUser" class="assign-target">
         {{ assignTargetUser.name }}（{{ assignTargetUser.username }}）
       </p>
+      <div class="assign-filter">
+        <el-input
+          v-model="assignQuery.q"
+          clearable
+          placeholder="搜索名称 / 序号"
+          style="width: 240px"
+          @keyup.enter.native="handleAssignSearch"
+        />
+        <el-button type="primary" icon="el-icon-search" @click="handleAssignSearch">
+          {{ $t('browser.search') }}
+        </el-button>
+      </div>
       <div v-loading="assignLoading">
         <el-empty
           v-if="!assignLoading && !allEnvironments.length"
@@ -111,6 +123,15 @@
           </el-checkbox>
         </el-checkbox-group>
       </div>
+      <pagination
+        v-show="assignTotal > 0"
+        :total="assignTotal"
+        :page.sync="assignQuery.page"
+        :limit.sync="assignQuery.limit"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        @pagination="loadAssignPage"
+      />
       <div slot="footer">
         <el-button @click="assignDialogVisible = false">{{ $t('browser.cancel') }}</el-button>
         <el-button type="primary" :loading="assignSaving" @click="submitAssignBrowsers">
@@ -131,6 +152,7 @@ import {
   assignUserEnvironments
 } from '@/api/system-user'
 import { fetchAssignOptions } from '@/api/environment'
+import Pagination from '@/components/Pagination'
 
 const emptyForm = () => ({
   id: '',
@@ -143,6 +165,7 @@ const emptyForm = () => ({
 
 export default {
   name: 'SystemUsers',
+  components: { Pagination },
   data() {
     return {
       list: [],
@@ -161,7 +184,14 @@ export default {
       assignSaving: false,
       assignTargetUser: null,
       allEnvironments: [],
-      selectedEnvIds: []
+      selectedEnvIds: [],
+      assignTotal: 0,
+      assignQuery: {
+        page: 1,
+        limit: 20,
+        q: ''
+      },
+      assignSelectionInitialized: false
     }
   },
   computed: {
@@ -258,20 +288,53 @@ export default {
       }
       this.assignTargetUser = row
       this.assignDialogVisible = true
-      this.assignLoading = true
       this.selectedEnvIds = []
+      this.assignSelectionInitialized = false
+      this.assignQuery = { page: 1, limit: 20, q: '' }
+      this.assignTotal = 0
+      this.allEnvironments = []
+      if (!this.list || !this.list.length) {
+        const usersRes = await fetchUserList()
+        this.list = usersRes.data || []
+      }
+      await this.loadAssignPage({ resetSelection: true })
+    },
+    handleAssignSearch() {
+      this.assignQuery.page = 1
+      this.loadAssignPage()
+    },
+    async loadAssignPage(options = {}) {
+      if (!this.assignTargetUser) return
+      this.assignLoading = true
       try {
-        // 复用已加载用户列表，避免弹窗内重复拉用户；环境用轻量 assign-options
-        if (!this.list || !this.list.length) {
-          const usersRes = await fetchUserList()
-          this.list = usersRes.data || []
+        const res = await fetchAssignOptions({
+          page: this.assignQuery.page || 1,
+          limit: this.assignQuery.limit || 20,
+          q: (this.assignQuery.q || '').trim() || undefined,
+          sortBy: 'createdAt',
+          sortOrder: 'desc',
+          targetUserId: this.assignTargetUser.id
+        })
+        const data = res.data || {}
+        // 兼容旧接口（数组）与新分页结构
+        if (Array.isArray(data)) {
+          this.allEnvironments = data
+          this.assignTotal = data.length
+          if (options.resetSelection || !this.assignSelectionInitialized) {
+            this.selectedEnvIds = data
+              .filter(env => env.ownerId === this.assignTargetUser.id)
+              .map(env => String(env.id))
+            this.assignSelectionInitialized = true
+          }
+        } else {
+          this.allEnvironments = Array.isArray(data.items) ? data.items : []
+          this.assignTotal = Number(data.total) || 0
+          if (options.resetSelection || !this.assignSelectionInitialized) {
+            const assigned = Array.isArray(data.assignedIds) ? data.assignedIds : []
+            this.selectedEnvIds = assigned.map(id => String(id))
+            this.assignSelectionInitialized = true
+          }
         }
-        const envRes = await fetchAssignOptions()
-        const envs = Array.isArray(envRes.data) ? envRes.data : []
-        this.allEnvironments = envs
-        this.selectedEnvIds = this.allEnvironments
-          .filter(env => env.ownerId === row.id)
-          .map(env => String(env.id))
       } finally {
         this.assignLoading = false
       }
@@ -298,13 +361,18 @@ export default {
   color: #909399;
 }
 .assign-target {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-weight: 600;
+}
+.assign-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .env-checkbox-group {
   display: flex;
   flex-direction: column;
-  max-height: 360px;
+  max-height: 320px;
   overflow-y: auto;
 }
 .env-checkbox-item {

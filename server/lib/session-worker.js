@@ -9,6 +9,7 @@ const { normalizeCookieEntry } = require('./cookie-normalize')
 const cdpNavigate = require('./cdp-navigate')
 const jddjScraper = require('./jddj-scraper')
 const jddjSelectors = require('./jddj-selectors')
+const { parseShopIdFromCookies } = require('./jddj-shop-id')
 const profileSync = require('./profile-sync')
 const cloudSync = require('./cloud-sync')
 const { logNative, warnNative, errorNative } = require('./file-logger')
@@ -190,6 +191,26 @@ async function persistCookiesToBackend(envId, cookies, token) {
   return { ok: true, cookieCount: normalized.length }
 }
 
+/**
+ * CDP 读 cookie → 写本地 profile + 后端（fail-soft 由调用方 catch）。
+ * @returns {{ cookieCount: number, cookies: object[] }}
+ */
+async function syncCookiesFromCdp(envId, port, token, options = {}) {
+  const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 15000
+  const all = await cdpNavigate.getAllCookies(port, timeoutMs)
+  const cookies = all.cookies || []
+  const local = writeCookiesToLocalProfile(envId, cookies)
+  try {
+    await persistCookiesToBackend(envId, cookies, token)
+  } catch (err) {
+    warnNative('persist cookies to backend failed', {
+      envId: String(envId),
+      error: (err && err.message) || String(err)
+    })
+  }
+  return { cookieCount: local.cookieCount, cookies }
+}
+
 async function persistSiteSnapshot(envId, jddj, token) {
   if (!token) return { skipped: true, reason: 'no-token' }
   return cloudApiJson(
@@ -280,15 +301,15 @@ async function runSessionJob(runtime, envId, req, options = {}) {
     await new Promise(r => setTimeout(r, 2000))
 
     // 4) Cookie 写回
-    const all = await cdpNavigate.getAllCookies(port, 15000)
-    const cookies = all.cookies || []
-    cookiesResult = writeCookiesToLocalProfile(id, cookies)
+    let cookies = []
     try {
-      await persistCookiesToBackend(id, cookies, token)
+      const synced = await syncCookiesFromCdp(id, port, token, { timeoutMs: 15000 })
+      cookiesResult = { cookieCount: synced.cookieCount }
+      cookies = synced.cookies || []
     } catch (err) {
-      warnNative('persist cookies to backend failed', {
+      warnNative('session cookie sync failed', {
         envId: id,
-        error: err.message
+        error: (err && err.message) || String(err)
       })
     }
 
@@ -298,6 +319,17 @@ async function runSessionJob(runtime, envId, req, options = {}) {
         entryUrl,
         collectMs: options.collectMs
       })
+      // 抓取仍无 shopId 时，用 cookie 补全
+      if (jddj && !jddj.shopId && cookies.length) {
+        const found = parseShopIdFromCookies(cookies)
+        if (found.shopId) {
+          jddj = {
+            ...jddj,
+            shopId: found.shopId,
+            shopIdSource: found.shopIdSource || 'cookie'
+          }
+        }
+      }
       try {
         await persistSiteSnapshot(id, jddj, token)
       } catch (err) {
@@ -386,5 +418,6 @@ module.exports = {
   writeCookiesToLocalProfile,
   persistSiteSnapshot,
   persistCookiesToBackend,
+  syncCookiesFromCdp,
   getQueueStats: () => ({ active, pending: queue.length })
 }

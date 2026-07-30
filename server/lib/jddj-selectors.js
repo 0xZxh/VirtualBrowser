@@ -37,6 +37,11 @@ const XHR_URL_PATTERNS = [
 /** DOM 选择器兜底（多候选，按稳定性排序） */
 const DOM = {
   shopName: [
+    // 到家商家后台首页店名（精确结构优先）
+    '#base-view-panel > div.base-view-content.is-wm-content > div > div > div.store-home-container > div.store-info-header.store-header > div > div > span',
+    '#base-view-panel [class*="store-info-header"] span',
+    '[class*="store-info-header"] span',
+    '[class*="store-header"] span',
     '[class*="shop-name"]',
     '[class*="store-name"]',
     '[class*="shopName"]',

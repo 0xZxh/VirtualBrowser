@@ -51,8 +51,23 @@ export class EnvironmentsController {
   @Get('assign-options')
   @UseGuards(RolesGuard)
   @Roles('admin')
-  async assignOptions(@Req() req: { user: UserRecord }) {
-    const data = await this.environmentsService.listAssignOptions(req.user)
+  async assignOptions(
+    @Req() req: { user: UserRecord },
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('q') q?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
+    @Query('targetUserId') targetUserId?: string
+  ) {
+    const data = await this.environmentsService.listAssignOptions(req.user, {
+      page: page != null && page !== '' ? Number(page) : 1,
+      limit: limit != null && limit !== '' ? Number(limit) : 20,
+      q,
+      sortBy,
+      sortOrder,
+      targetUserId
+    })
     return { code: 0, data }
   }
 

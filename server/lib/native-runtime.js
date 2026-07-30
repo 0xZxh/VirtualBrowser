@@ -9,6 +9,7 @@ const cloudSync = require('./cloud-sync')
 const crxStore = require('./crx-store')
 const cdpNavigate = require('./cdp-navigate')
 const { normalizeCookieEntry } = require('./cookie-normalize')
+const sessionWorker = require('./session-worker')
 const { logNative, warnNative, errorNative } = require('./file-logger')
 
 const repoRoot = path.join(__dirname, '../..')
@@ -1074,6 +1075,26 @@ async function launchBrowser(envId, req, options = {}) {
           error: err && err.message ? err.message : String(err)
         })
       }
+
+      // 启动成功后回写最新 cookie（续期），失败不阻断
+      try {
+        await new Promise(r => setTimeout(r, 1500))
+        const still = running.get(id)
+        if (still && still.exitCode == null && !still.killed) {
+          const synced = await sessionWorker.syncCookiesFromCdp(id, debuggingPort, token, {
+            timeoutMs: 12000
+          })
+          logNative('launch cookie sync-out', {
+            envId: id,
+            cookieCount: synced.cookieCount
+          })
+        }
+      } catch (err) {
+        warnNative('launch cookie sync-out failed', {
+          envId: id,
+          error: err && err.message ? err.message : String(err)
+        })
+      }
     })()
   } else {
     // 会话模式仍注入 cookie（mode=1），便于打开到家后台已登录
@@ -1119,6 +1140,27 @@ async function stopBrowser(envId, req) {
   const id = String(envId)
   const workerDir = path.join(workersRoot, id)
   const proc = running.get(id)
+  const debugPort = getEnvDebugPort(id)
+  const token = getCloudToken(req) || cloudTokenByEnv.get(id)
+
+  // 关闭前 CDP 回写 cookie（续期），失败不阻断关闭
+  if (proc && proc.exitCode == null && !proc.killed && debugPort) {
+    try {
+      const synced = await sessionWorker.syncCookiesFromCdp(id, debugPort, token, {
+        timeoutMs: 8000
+      })
+      logNative('stop cookie sync-out', {
+        envId: id,
+        cookieCount: synced.cookieCount
+      })
+    } catch (err) {
+      warnNative('stop cookie sync-out failed', {
+        envId: id,
+        error: err && err.message ? err.message : String(err)
+      })
+    }
+  }
+
   let wasRunning = false
   if (proc && proc.exitCode == null && !proc.killed) {
     wasRunning = true

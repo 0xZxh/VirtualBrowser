@@ -130,23 +130,76 @@ export class EnvironmentsService {
     return { items: records.map(toBrowserItem), total }
   }
 
-  /** Lightweight list for admin assign-browsers dialog (no fingerprint/cookie payload). */
+  /**
+   * Lightweight paginated list for admin assign-browsers dialog
+   * (no fingerprint/cookie payload). Default sort: createdAt desc.
+   */
   async listAssignOptions(
-    user: UserRecord
-  ): Promise<Array<{ id: string | number; name: string; group: string; ownerId: string }>> {
+    user: UserRecord,
+    query: {
+      page?: number
+      limit?: number
+      q?: string
+      sortBy?: string
+      sortOrder?: string
+      targetUserId?: string
+    } = {}
+  ): Promise<{
+    items: Array<{
+      id: string | number
+      name: string
+      group: string
+      ownerId: string
+      createdAt: string
+    }>
+    total: number
+    assignedIds: string[]
+  }> {
     if (!this.isAdmin(user)) {
       throw new ForbiddenException({ code: 403, message: '仅管理员可获取分配选项' })
     }
-    const records = await this.envRepository.findByTenant(user.tenantId)
-    return records.map(r => {
+    const page = Math.max(1, Number(query.page) || 1)
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
+    const q = query.q != null ? String(query.q).trim() : ''
+    const sortBy = query.sortBy === 'id' ? 'id' : 'createdAt'
+    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc'
+    const targetUserId =
+      query.targetUserId != null && String(query.targetUserId).trim()
+        ? String(query.targetUserId).trim()
+        : ''
+
+    const filter = {
+      tenantId: user.tenantId,
+      ...(q ? { q } : {})
+    }
+
+    const [records, total, owned] = await Promise.all([
+      this.envRepository.findPage(filter, {
+        skip: (page - 1) * limit,
+        limit,
+        sortBy,
+        sortOrder
+      }),
+      this.envRepository.count(filter),
+      targetUserId ? this.envRepository.findByOwner(targetUserId) : Promise.resolve([])
+    ])
+
+    const assignedIds = (owned || [])
+      .filter(r => r.tenantId === user.tenantId)
+      .map(r => String(r.envId))
+
+    const items = records.map(r => {
       const numericId = Number(r.envId)
       return {
         id: Number.isFinite(numericId) ? numericId : r.envId,
         name: r.name,
         group: r.group,
-        ownerId: r.ownerId
+        ownerId: r.ownerId,
+        createdAt: r.createdAt
       }
     })
+
+    return { items, total, assignedIds }
   }
 
   async getOne(user: UserRecord, envId: string): Promise<BrowserEnvironmentItem> {
