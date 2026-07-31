@@ -12,15 +12,15 @@
   !define STAGING_DIR "..\staging"
 !endif
 
-!define PRODUCT_NAME "VirtualBrowser"
-!define PRODUCT_PUBLISHER "VirtualBrowser"
+!define PRODUCT_NAME "先富"
+!define PRODUCT_PUBLISHER "先富"
 !define INSTALL_DIR "$LOCALAPPDATA\Programs\VirtualBrowser"
 !define USER_DATA_DIR "$LOCALAPPDATA\VirtualBrowser"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VirtualBrowser"
 !define APP_ICON "..\assets\app.ico"
 
 Name "${PRODUCT_NAME}"
-OutFile "..\output\VirtualBrowser-Setup-${PRODUCT_VERSION}.exe"
+OutFile "..\output\XianFu-Setup-${PRODUCT_VERSION}.exe"
 InstallDir "${INSTALL_DIR}"
 RequestExecutionLevel user
 ShowInstDetails show
@@ -29,7 +29,7 @@ ShowInstDetails show
 !define MUI_ICON "${APP_ICON}"
 !define MUI_UNICON "${APP_ICON}"
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Launch VirtualBrowser"
+!define MUI_FINISHPAGE_RUN_TEXT "启动先富"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchApp
 
 !insertmacro MUI_PAGE_WELCOME

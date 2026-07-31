@@ -376,7 +376,7 @@ if (-not $SkipNsis) {
   finally {
     Pop-Location
   }
-  $setupExe = Join-Path $outputRoot "VirtualBrowser-Setup-$ProductVersion.exe"
+  $setupExe = Join-Path $outputRoot "XianFu-Setup-$ProductVersion.exe"
   if (Test-Path $setupExe) {
     Write-Host "Installer: $setupExe" -ForegroundColor Green
   }
@@ -385,4 +385,4 @@ if (-not $SkipNsis) {
 }
 
 Write-Step "Done"
-Write-Host "Next: run staging\VirtualBrowser.exe or install output\VirtualBrowser-Setup-*.exe"
+Write-Host "Next: run staging\VirtualBrowser.exe or install output\XianFu-Setup-*.exe"

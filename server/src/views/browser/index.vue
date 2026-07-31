@@ -2798,7 +2798,7 @@ export default {
         return
       }
       var currentDate = new Date().toISOString().replace(/[-:]/g, '')
-      var fileName = 'Virtual-Browser_' + currentDate + '.json'
+      var fileName = 'xianfu_' + currentDate + '.json'
       var blob = new Blob([JSON.stringify(this.selectedRows, null, 2)], {
         type: 'application/json;charset=utf-8'
       })

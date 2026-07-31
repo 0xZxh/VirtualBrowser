@@ -36,12 +36,17 @@ const XHR_URL_PATTERNS = [
 
 /** DOM 选择器兜底（多候选，按稳定性排序） */
 const DOM = {
+  shopId: [
+    '#base-view-panel span.store-id',
+    '.store-info-header span.store-id',
+    'span.store-id'
+  ],
   shopName: [
-    // 到家商家后台首页店名（精确结构优先）
-    '#base-view-panel > div.base-view-content.is-wm-content > div > div > div.store-home-container > div.store-info-header.store-header > div > div > span',
-    '#base-view-panel [class*="store-info-header"] span',
-    '[class*="store-info-header"] span',
-    '[class*="store-header"] span',
+    // 店名容器（勿落到 span.store-id）
+    '#base-view-panel .store-info-header .store-name',
+    '.store-info-header .store-name',
+    '#base-view-panel [class*="store-info-header"] [class*="store-name"]',
+    '[class*="store-info-header"] [class*="store-name"]',
     '[class*="shop-name"]',
     '[class*="store-name"]',
     '[class*="shopName"]',
@@ -51,11 +56,12 @@ const DOM = {
     '[data-testid="shop-name"]'
   ],
   businessStatus: [
-    '[class*="business-status"]',
-    '[class*="biz-status"]',
-    '[class*="store-status"]',
-    '[class*="营业"]',
-    '.header-status',
+    // 仅店头区域，避免整页误命中
+    '#base-view-panel .store-info-header [class*="status"]',
+    '.store-info-header [class*="status"]',
+    '.store-header [class*="status"]',
+    '.store-info-header .store-status',
+    '.store-header .store-status',
     '[data-testid="business-status"]'
   ],
   orderRows: [
@@ -67,10 +73,10 @@ const DOM = {
   ]
 }
 
-/** 营业状态关键词归一化 */
+/** 营业状态关键词归一化（休息/暂停优先于营业，勿裸匹配「营业」） */
 const BUSINESS_STATUS_MAP = [
-  { re: /营业中|开业|营业/, value: '营业中' },
-  { re: /休息中|打烊|暂停营业|歇业/, value: '休息中' }
+  { re: /休息中|打烊|暂停营业|歇业/, value: '休息中' },
+  { re: /营业中|开业中|开业/, value: '营业中' }
 ]
 
 module.exports = {

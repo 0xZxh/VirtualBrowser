@@ -71,7 +71,7 @@ export async function chromeSendTimeout(name, timeout = 2000, ...params) {
     if (!isNativeBridgeAvailable()) {
       reject(
         new Error(
-          'native bridge 不可用（vbDesktop.invoke / chrome.send）。开发二开请用 npm run dev（dev-native-bridge）；生产环境请在 VirtualBrowser 桌面壳内运行。'
+          'native bridge 不可用（vbDesktop.invoke / chrome.send）。开发二开请用 npm run dev（dev-native-bridge）；生产环境请在先富桌面客户端内运行。'
         )
       )
       return

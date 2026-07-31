@@ -25,8 +25,11 @@ function normalizeBusinessStatus(text) {
   for (const rule of selectors.BUSINESS_STATUS_MAP) {
     if (rule.re.test(s)) return rule.value
   }
-  if (/营业|休息|打烊|开业/.test(s)) return s.slice(0, 32)
   return '未知'
+}
+
+function isKnownBusinessStatus(status) {
+  return status === '营业中' || status === '休息中'
 }
 
 function pickString(...candidates) {
@@ -183,6 +186,7 @@ function tryParseJson(text) {
 function mergeExtract(target, part, options = {}) {
   if (!part) return target
   const preferPartShopId = options.preferPartShopId === true
+  const preferPartBusinessStatus = options.preferPartBusinessStatus === true
   if (part.shopName && !target.shopName) target.shopName = part.shopName
   if (part.shopId) {
     if (preferPartShopId || !target.shopId) {
@@ -191,7 +195,11 @@ function mergeExtract(target, part, options = {}) {
     }
   }
   if (part.businessStatus && part.businessStatus !== '未知') {
-    if (!target.businessStatus || target.businessStatus === '未知') {
+    if (
+      preferPartBusinessStatus ||
+      !target.businessStatus ||
+      target.businessStatus === '未知'
+    ) {
       target.businessStatus = part.businessStatus
     }
   }
@@ -202,9 +210,10 @@ function mergeExtract(target, part, options = {}) {
 }
 
 /**
- * DOM 兜底：在页面执行选择器脚本，并读取 localStorage.shopInfo。
+ * DOM 兜底：首页 span.store-id / 店名节点，并读取 localStorage.shopInfo。
  */
 function buildDomEvalScript() {
+  const shopIdSels = JSON.stringify(selectors.DOM.shopId)
   const shopSels = JSON.stringify(selectors.DOM.shopName)
   const statusSels = JSON.stringify(selectors.DOM.businessStatus)
   const orderSels = JSON.stringify(selectors.DOM.orderRows)
@@ -213,6 +222,10 @@ function buildDomEvalScript() {
     function textOf(el){
       if(!el) return '';
       return String(el.innerText || el.textContent || '').replace(/\\s+/g,' ').trim();
+    }
+    function htmlTextOf(el){
+      if(!el) return '';
+      return String(el.innerHTML||'').replace(/<[^>]+>/g,'').replace(/\\s+/g,' ').trim();
     }
     function firstText(sels){
       for(var i=0;i<sels.length;i++){
@@ -224,36 +237,101 @@ function buildDomEvalScript() {
       }
       return '';
     }
+    function shopNameFromEl(el){
+      if(!el) return '';
+      try{
+        var clone=el.cloneNode(true);
+        var ids=clone.querySelectorAll('span.store-id,[class*="store-id"]');
+        for(var i=0;i<ids.length;i++){
+          if(ids[i].parentNode) ids[i].parentNode.removeChild(ids[i]);
+        }
+        return textOf(clone) || htmlTextOf(clone);
+      }catch(e){
+        return textOf(el);
+      }
+    }
+    function firstShopName(sels){
+      for(var i=0;i<sels.length;i++){
+        try{
+          var el=document.querySelector(sels[i]);
+          var t=shopNameFromEl(el);
+          if(t) return t;
+        }catch(e){}
+      }
+      return '';
+    }
+    function shortStatusText(t){
+      var s=String(t||'').replace(/\\s+/g,' ').trim();
+      if(!s || s.length>16) return '';
+      return s;
+    }
+    function firstStatus(sels){
+      for(var i=0;i<sels.length;i++){
+        try{
+          var el=document.querySelector(sels[i]);
+          var t=shortStatusText(textOf(el));
+          if(t && (/休息中|打烊|暂停营业|歇业|营业中|开业中|开业/.test(t))) return t;
+        }catch(e){}
+      }
+      return '';
+    }
+    function headerStatusFallback(){
+      var roots=['.store-info-header','.store-header','#base-view-panel .store-info-header'];
+      for(var i=0;i<roots.length;i++){
+        try{
+          var root=document.querySelector(roots[i]);
+          var ht=textOf(root).slice(0,500);
+          if(!ht) continue;
+          if(/休息中|打烊|暂停营业|歇业/.test(ht)) return '休息中';
+          if(/营业中|开业中/.test(ht)) return '营业中';
+        }catch(e){}
+      }
+      return '';
+    }
     var bodyText=textOf(document.body).slice(0,4000);
     var loginHints=${loginHints};
     var looksLogin=false;
     for(var h=0;h<loginHints.length;h++){
       if(bodyText.indexOf(loginHints[h])>=0){ looksLogin=true; break; }
     }
-    var shopName=firstText(${shopSels});
-    var businessStatus=firstText(${statusSels});
-    if(!businessStatus){
-      if(/营业中/.test(bodyText)) businessStatus='营业中';
-      else if(/休息中|打烊|暂停营业/.test(bodyText)) businessStatus='休息中';
-    }
     var shopId=null;
     var shopIdSource=null;
+    var shopIdSels=${shopIdSels};
+    for(var si=0;si<shopIdSels.length;si++){
+      try{
+        var idEl=document.querySelector(shopIdSels[si]);
+        var idVal=htmlTextOf(idEl) || textOf(idEl);
+        if(idVal){
+          shopId=idVal;
+          shopIdSource='dom:store-id';
+          break;
+        }
+      }catch(e){}
+    }
+    var shopName=firstShopName(${shopSels});
+    var businessStatus=firstStatus(${statusSels}) || headerStatusFallback();
     var lsShopName=null;
     try{
       var raw=localStorage.getItem('shopInfo');
       if(raw){
         var info=JSON.parse(raw);
         if(info && typeof info==='object'){
-          var sid=String(info.stationNo||info.shopId||info.storeId||'').trim();
-          if(sid){
-            shopId=sid;
-            shopIdSource='localStorage:shopInfo';
+          if(!shopId){
+            var sid=String(info.stationNo||info.shopId||info.storeId||'').trim();
+            if(sid){
+              shopId=sid;
+              shopIdSource='localStorage:shopInfo';
+            }
           }
           var sn=String(info.shopName||info.storeName||info.stationName||'').trim();
           if(sn) lsShopName=sn;
-          var st=String(info.shopStatus||info.businessStatus||'').trim();
-          if(st==='0'||st==='营业中'||/营业/.test(st)) businessStatus=businessStatus||'营业中';
-          else if(st==='1'||/休息|打烊/.test(st)) businessStatus=businessStatus||'休息中';
+          if(!businessStatus){
+            var st=String(info.shopStatus!=null?info.shopStatus:(info.businessStatus||'')).trim();
+            if(st==='0') businessStatus='营业中';
+            else if(st==='1') businessStatus='休息中';
+            else if(/休息中|打烊|暂停营业|歇业/.test(st)) businessStatus='休息中';
+            else if(/营业中|开业中|开业/.test(st)) businessStatus='营业中';
+          }
         }
       }
     }catch(e){}
@@ -369,16 +447,17 @@ async function scrapeJddj(port, options = {}) {
           businessStatus: '未知'
         })
       }
-      // localStorage shopInfo 优先于 XHR
+      // DOM store-id / localStorage / 店头状态优先于 XHR
+      const domStatus = dom.businessStatus
+        ? normalizeBusinessStatus(dom.businessStatus)
+        : '未知'
       mergeExtract(
         merged,
         {
           shopName: dom.shopName,
           shopId: dom.shopId,
           shopIdSource: dom.shopIdSource,
-          businessStatus: dom.businessStatus
-            ? normalizeBusinessStatus(dom.businessStatus)
-            : null,
+          businessStatus: isKnownBusinessStatus(domStatus) ? domStatus : null,
           orders: Array.isArray(dom.orders)
             ? dom.orders
                 .map(o =>
@@ -394,7 +473,13 @@ async function scrapeJddj(port, options = {}) {
                 .filter(Boolean)
             : []
         },
-        { preferPartShopId: !!(dom.shopId && String(dom.shopIdSource || '').includes('localStorage')) }
+        {
+          preferPartShopId: !!(
+            dom.shopId &&
+            /^(dom:store-id|localStorage)/.test(String(dom.shopIdSource || ''))
+          ),
+          preferPartBusinessStatus: isKnownBusinessStatus(domStatus)
+        }
       )
     }
 

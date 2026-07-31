@@ -1,7 +1,7 @@
 {
   "name": "virtualbrowser-backend",
   "version": "0.2.0",
-  "description": "VirtualBrowser 自建后端（NestJS + 双模式存储）",
+  "description": "先富自建后端（NestJS + 双模式存储）",
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",
