@@ -71,6 +71,12 @@
         </el-button>
       </div>
       <div class="toolbar-secondary">
+        <el-tooltip :content="$t('browser.jddjRefreshLeaderHint')" placement="bottom">
+          <span class="toolbar-leader-switch">
+            <span class="toolbar-leader-label">{{ $t('browser.jddjRefreshLeader') }}</span>
+            <el-switch v-model="jddjRefreshLeader" @change="onJddjRefreshLeaderChange" />
+          </span>
+        </el-tooltip>
         <el-button plain @click="showSettingsDialog">IP查询API设置</el-button>
         <el-upload
           v-permission="['admin', 'operator']"
@@ -914,12 +920,6 @@
           </el-col>
         </el-row>
         <el-input v-model="apiLink" placeholder="自建可留空（自动推导）；或填写完整 URL" />
-        <el-form-item :label="$t('browser.jddjRefreshLeader')" style="margin-top: 16px">
-          <el-switch v-model="jddjRefreshLeader" />
-          <div style="color: #909399; font-size: 12px; line-height: 1.5; margin-top: 6px">
-            {{ $t('browser.jddjRefreshLeaderHint') }}
-          </div>
-        </el-form-item>
       </el-form>
       <span slot="footer" class="dialog-footer">
         <el-button @click="showSetDialog = false">取消</el-button>
@@ -1137,8 +1137,8 @@ export default {
       selectedGroup: '默认分组',
       apiLink: '',
       Channel: 'selfhost',
-      /** 本机是否负责自动刷新（global.dat.jddjRefreshLeader，缺省 true） */
-      jddjRefreshLeader: true,
+      /** 本机是否负责自动刷新（global.dat.jddjRefreshLeader，缺省 false） */
+      jddjRefreshLeader: false,
       saveApi: false,
       selectedRows: [],
       /** 跨刷新保留勾选（id 一律转 string） */
@@ -1650,6 +1650,7 @@ export default {
           this.$message.error(msg)
         } else {
           console.warn('[jddj] schedule refresh failed', envId, msg)
+          this.appendNativeLog('WARN', 'jddj.schedule.env', { envId, error: msg })
         }
       } finally {
         if (this._jddjLoadingTimers && this._jddjLoadingTimers[envId]) {
@@ -1696,21 +1697,48 @@ export default {
     },
     isJddjRefreshLeader() {
       const g = this.GlobalData || {}
-      // 缺省 true，保证单机行为与改前一致；多终端可在设置里关掉
-      return g.jddjRefreshLeader !== false
+      // 缺省 false：需在工具栏显式打开本机责任机
+      return g.jddjRefreshLeader === true
+    },
+    appendNativeLog(level, message, meta) {
+      chromeSend('appendNativeLog', {
+        level: level || 'INFO',
+        message: message || '',
+        meta: meta || undefined
+      }).catch(err => {
+        console.warn('[jddj] appendNativeLog failed', err)
+      })
+    },
+    async onJddjRefreshLeaderChange(val) {
+      const leader = val === true
+      try {
+        await setGlobalData('jddjRefreshLeader', leader)
+        this.GlobalData = { ...(this.GlobalData || {}), jddjRefreshLeader: leader }
+        this.jddjRefreshLeader = leader
+        this.startJddjSchedule()
+        this.appendNativeLog('INFO', 'jddj.schedule.leader', { leader })
+      } catch (err) {
+        this.jddjRefreshLeader = !leader
+        this.$message.error((err && err.message) || '保存责任机设置失败')
+      }
     },
     startJddjSchedule() {
       this.stopJddjSchedule()
       if (!this.isJddjRefreshLeader()) {
         console.log('[jddj] schedule skipped: this PC is not refresh leader')
+        this.appendNativeLog('INFO', 'jddj.schedule.skip', { reason: 'not-leader' })
         return
       }
       const ms = Number((this.GlobalData && this.GlobalData.jddjScheduleMs) || 0) || 30 * 60 * 1000
       this._jddjScheduleTimer = setInterval(() => {
         this.runJddjScheduleTick().catch(err => {
           console.warn('[jddj] schedule tick error', err)
+          this.appendNativeLog('WARN', 'jddj.schedule.tick.error', {
+            error: err && err.message ? err.message : String(err)
+          })
         })
       }, ms)
+      this.appendNativeLog('INFO', 'jddj.schedule.start', { intervalMs: ms })
     },
     stopJddjSchedule() {
       if (this._jddjScheduleTimer) {
@@ -1721,6 +1749,9 @@ export default {
     async runJddjScheduleTick() {
       if (this._jddjScheduleRunning) return
       this._jddjScheduleRunning = true
+      const startedAt = Date.now()
+      let ok = 0
+      let fail = 0
       try {
         let all = []
         try {
@@ -1729,12 +1760,29 @@ export default {
           all = this.list || []
         }
         const enabled = (all || []).filter(item => this.isJddjAutoEnabled(item))
+        const envIds = enabled.map(e => String(e.id))
+        this.appendNativeLog('INFO', 'jddj.schedule.tick', {
+          enabledCount: enabled.length,
+          envIds
+        })
         for (const env of enabled) {
           const row = (this.list || []).find(r => String(r.id) === String(env.id)) || env
           if (row.jddjLoading) continue
-          await this.handleRefreshJddj(row, { silent: true })
+          try {
+            await this.handleRefreshJddj(row, { silent: true })
+            const snap = this.getJddjSnapshot(row)
+            if (snap && snap.ok === false) fail++
+            else ok++
+          } catch {
+            fail++
+          }
         }
       } finally {
+        this.appendNativeLog('INFO', 'jddj.schedule.tick.end', {
+          ok,
+          fail,
+          elapsedMs: Date.now() - startedAt
+        })
         this._jddjScheduleRunning = false
       }
     },
@@ -1762,7 +1810,7 @@ export default {
         this.GlobalData = globalData
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
-        this.jddjRefreshLeader = this.GlobalData.jddjRefreshLeader !== false
+        this.jddjRefreshLeader = this.GlobalData.jddjRefreshLeader === true
         if (prevLeader !== this.isJddjRefreshLeader()) {
           this.startJddjSchedule()
         }
@@ -3105,7 +3153,6 @@ export default {
       const store = await getGlobalData()
       this.Channel = store.Channel || 'selfhost'
       this.apiLink = store.apiLink || (await getDefaultIpGeoApiLink())
-      this.jddjRefreshLeader = store.jddjRefreshLeader !== false
       this.showSetDialog = true
     },
     async saveSettings() {
@@ -3157,23 +3204,17 @@ export default {
       if (channel !== GlobalData.Channel) {
         await setGlobalData('Channel', channel)
       }
-      const leader = this.jddjRefreshLeader !== false
-      if (leader !== (GlobalData.jddjRefreshLeader !== false)) {
-        await setGlobalData('jddjRefreshLeader', leader)
-      }
       this.GlobalData = {
         ...(this.GlobalData || {}),
         ...GlobalData,
         apiLink: link,
-        Channel: channel,
-        jddjRefreshLeader: leader
+        Channel: channel
       }
-      this.startJddjSchedule()
 
       this.$notify({
         title: '保存成功',
         message:
-          '设置已写入本机 User Data/global.dat（IP 库与自动刷新责任机；与云端登录地址无关）。',
+          'IP 查询 API 已写入本机 User Data/global.dat（与云端登录地址无关）。启动默认主页时会自动注入到指纹窗口。',
         type: 'success',
         duration: 4000
       })
@@ -3303,6 +3344,19 @@ export default {
 
   .toolbar-secondary {
     margin-left: auto;
+  }
+
+  .toolbar-leader-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+
+  .toolbar-leader-label {
+    font-size: 13px;
+    color: #606266;
+    white-space: nowrap;
   }
 
   .toolbar-select {

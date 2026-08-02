@@ -10,9 +10,10 @@ const fileLogger = require(path.join(__dirname, '../../../server/lib/file-logger
   getLogsDir: () => string
   ensureLogsDir: () => string
   appendLog: (fileName: string, level: string, message: string, meta?: unknown) => void
+  resolveLogFileName: (fileNameOrBase: string, date?: Date) => string
 }
 
-const BACKEND_LOG = 'backend.log'
+const BACKEND_LOG = 'backend'
 
 let teeInstalled = false
 let teeing = false
@@ -30,7 +31,10 @@ function safeStringify(value: unknown): string {
 }
 
 export function getBackendLogPath(): string {
-  return path.join(fileLogger.getLogsDir(), BACKEND_LOG)
+  const name = fileLogger.resolveLogFileName
+    ? fileLogger.resolveLogFileName(BACKEND_LOG)
+    : `${BACKEND_LOG}.log`
+  return path.join(fileLogger.getLogsDir(), name)
 }
 
 export function appendBackendLog(level: string, message: string, meta?: unknown): void {

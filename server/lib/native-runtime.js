@@ -1550,7 +1550,21 @@ async function handleNativeCall(name, params = [], req) {
       const message = String((params[0] && params[0].message) || '')
       const meta = params[0] && params[0].meta
       const { appendLog } = require('./file-logger')
-      appendLog('ui.log', level, message, meta)
+      appendLog('ui', level, message, meta)
+      return { ok: true }
+    }
+    case 'appendNativeLog': {
+      const level = String((params[0] && params[0].level) || 'INFO').toUpperCase()
+      const message = String((params[0] && params[0].message) || '')
+      const meta = params[0] && params[0].meta
+      const fl = require('./file-logger')
+      if (level === 'ERROR') {
+        fl.errorNative(message, meta)
+      } else if (level === 'WARN' || level === 'WARNING') {
+        fl.warnNative(message, meta)
+      } else {
+        fl.logNative(message, meta)
+      }
       return { ok: true }
     }
     case 'getBrowserVersion':
