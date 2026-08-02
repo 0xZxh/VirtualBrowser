@@ -1,222 +1,154 @@
 # 模块 05 — Profile 云同步（Cookie + 缓存）
 
-> **状态：** 🟡 部分完成  
+> **状态：** 🟢 主路径已落地  
 > **交付基线：** [DELIVERY_STANDARD.md](../DELIVERY_STANDARD.md)  
-> **最后更新：** 2026-07-04
+> **最后更新：** 2026-08-02
 
 ## 1. 目标与边界
 
 **负责：**
 
-- 指纹环境 **运行时** Cookie、LocalStorage、IndexedDB、HTTP 缓存等的打包与解包
-- 本地快照 zip 与云端 `server-backend` 快照 API 的上传/下载
-- `launchBrowser` 生命周期：~~启动前 pull~~、退出后 pack + upload（**启动默认不 auto-pull**，站点数据靠列表「云同步」）
+- 指纹环境 **运行时** Cookie、LocalStorage、IndexedDB 等的打包与解包
+- 本地快照 zip 与云端快照 API 的上传/下载（version 闸门）
+- `launchBrowser`：**启动前 auto-pull**（fail-soft）、关闭/会话后 pack + upload（需登录到家 `user` cookie）
 - 跨机恢复同一环境的网站登录态
+- 自动刷新责任机（`jddjRefreshLeader`）与新建带 Cookie 默认开自动刷新
 
 **不负责：**
 
-- 指纹配置 JSON import/export（仍走 `browser-list` / `virtual.dat`）
+- 指纹配置 JSON 本体同步（走 `environments` + `virtual.dat`，不经 zip）
 - 用户登录 UI（见 [02-auth-login](02-auth-login.md)）
-- 多租户快照隔离（见 [03.8](03-rbac-permissions.md#53)）
+- 多租户快照隔离细节（见 [03.8](03-rbac-permissions.md#53)）
 
-**与表单 cookie 区分：** `browser/index.vue` 里 `form.cookie.jsonStr` 是指纹**注入用配置**，≠ Chromium 运行时 `Network/Cookies` 数据库。
-
-### 与指纹表单的关系（两套通道）
-
-| 通道 | 存什么 | 存哪里 | 怎么同步到另一台设备 |
-|------|--------|--------|----------------------|
-| **指纹表单**（UA/代理/WebGL/主页等） | 环境配置 JSON | 云端 Mongo（`/api/environments`）+ 本机 `virtual.dat` | **同一账号登录**即可看到相同表单；不经「云同步」按钮 |
-| **云同步按钮** | 站点 Cookies/Storage/IndexedDB 等 | 云端 `DATA_DIR/profiles/{tenant}/{envId}/snapshot.zip`（`cloudApiBase` 直连，无第三方中转）→ 本机 `Workers/{id}/` | 手动上传/拉取 |
-
-**启动不再自动 pull 云端快照**（避免大包卡死启动）。需要登录态一致时，先点列表「云同步」再启动。
-
-启动前会清理占用该 `Workers/{id}` 的残留内核进程与 Singleton 锁；CDP 未就绪会向 UI 返回失败（避免「日志显示已启动但无窗口」）。
+**与表单 cookie 区分：** `form.cookie.jsonStr` 是指纹**注入用配置**，≠ Chromium 运行时 `Network/Cookies` 数据库。
 
 ---
 
-## 2. 架构与数据流
+## 1.1 三层数据（心智模型）
+
+| 层 | 存什么 | 本地 | 云端 | 谁消费 |
+|---|---|---|---|---|
+| **指纹配置** | UA/WebGL/代理/主页等 | `browser-list.json`、`Workers/{id}/virtual.dat` | Mongo `environments.payload` | 内核按 `--worker-id` 读 `virtual.dat` |
+| **登录会话** | Cookies / Storage 等 | `Workers/{id}/` | `profiles/.../snapshot.zip` + `meta.version` | 启动 pull / 关闭 upload |
+| **业务快照** | 店名、店 ID、营业状态 | 列表 `siteSnapshot` | Mongo `payload.siteSnapshot.jddj` | 列表展示；与 zip 无关 |
+
+另有 **Cookie JSON 镜像**：CDP 读出后写 list/`virtual.dat`；存在非空 `name===user` 才 `PUT` 环境 cookie。与 zip **两条通道**。
+
+**一句话：**
+
+- 改指纹 → 保存环境 → `virtual.dat` → 下次启动读新指纹  
+- 换机器继续登录 → 启动 pull zip（`cloud.version > local`）→ 本地已有会话则跳过表单 Cookie 注入  
+- 新建带 Cookie → 默认 `autoJddj` / `jddjAutoRefresh`（仅创建）  
+- 多终端 → 上传前 version 闸门（`stale-local`）+ 仅责任机跑自动刷新  
+
+---
+
+## 2. 启动与同步时序
 
 ```mermaid
 sequenceDiagram
-  participant UI as 启动环境
-  participant Bridge as native-bridge
-  participant PS as profile-sync.js
-  participant CS as cloud-sync.js
+  participant UI as 列表页
+  participant NR as native-runtime
+  participant CS as cloud-sync
   participant BE as server-backend
-  participant Disk as Workers/envId
+  participant Disk as Workers
 
-  UI->>Bridge: launchBrowser(envId)
-  Note over Bridge: 不再 await 云端 pull
-  Bridge->>Disk: refresh virtual.dat + spawn
-  Note over UI,BE: 站点快照请用云同步按钮手动 pull/upload
-  Note over Bridge,Disk: 用户浏览产生 Cookie
-  Bridge->>PS: exit 后 packProfile
-  Bridge->>CS: uploadSnapshot
-  CS->>BE: POST snapshot
+  UI->>NR: launchBrowser
+  NR->>CS: shouldPullFromCloud
+  alt cloud newer / no local
+    CS->>BE: GET zip
+    CS->>Disk: unpack + cloud-meta
+  else local-without-meta
+    Note over CS: 不自动覆盖本机会话
+  end
+  NR->>Disk: refresh virtual.dat + spawn
+  NR->>NR: maybeInjectFormCookies（空 profile 才注入）
+  NR->>NR: syncCookiesFromCdp（有 user 才 PUT）
+  Note over UI,BE: 关闭 / 会话结束
+  NR->>CS: shouldUploadToCloud
+  alt stale-local
+    NR-->>UI: 拒绝上传，先拉取
+  else ok and loggedIn
+    CS->>BE: POST snapshot version++
+  end
 ```
 
-**本地路径：**
+### Pull（`shouldPullFromCloud`）
+
+| 条件 | pull | reason |
+|------|------|--------|
+| 云端无包 | 否 | `no-cloud-snapshot` |
+| 本地无会话文件 | 是 | `no-local-data` |
+| 本地有数据但无 `cloud-meta.version` | **否** | `local-without-meta` |
+| `cloud.version > local.version` | 是 | `cloud-newer` |
+| 否则 | 否 | `up-to-date` |
+
+手动「从云端拉取」= **强制**下载。启动 pull 超时 fail-soft，不阻断 spawn。
+
+### Upload（`shouldUploadToCloud`）
+
+- 若 `cloud.version > local.cloud-meta.version` → **拒绝**，日志 `stale-local`，提示先拉取  
+- 另需：有 token + 到家登录态（`user` cookie）才实际上传  
+- stop / exit / 会话 / 手动上传共用 `uploadSnapshot` 闸门  
+
+### UI 同步状态
+
+`local-without-meta`：本机有会话、未对齐云端 meta，**不会自动 pull 覆盖**（与 pull 判定一致；勿再标成「云端较新」）。
+
+---
+
+## 3. 自动刷新与多终端
+
+| 项 | 说明 |
+|----|------|
+| 环境开关 | `autoJddj` / `jddjAutoRefresh`（双字段） |
+| 新建默认 | Cookie `mode=1` 且 `value[]` 非空 → 创建时默认双开（编辑不联动） |
+| 周期 | `global.dat.jddjScheduleMs`，默认 30 分钟 |
+| 责任机 | `global.dat.jddjRefreshLeader`（缺省 `true`）；设置对话框可关；非责任机不跑 interval |
+| 调度位置 | 列表页前端 `startJddjSchedule`（页面不打开则不跑） |
+| 会话流水线 | pull → 无头启动 → 导航 → cookie → scrape → site-snapshot → 有登录则 upload |
+
+---
+
+## 4. 本地 / 云端路径
 
 | 路径 | 内容 |
 |------|------|
 | `%LOCALAPPDATA%\VirtualBrowser\Workers\{envId}\` | Chromium user-data-dir |
 | `%LOCALAPPDATA%\VirtualBrowser\ProfileSnapshots\{envId}\` | 本地 zip + `cloud-meta.json` |
-| `server-backend/data/profiles/{tenantId}/{envId}/` | 云端 snapshot.zip + meta.json（legacy `{envId}/` 可读） |
+| `%LOCALAPPDATA%\VirtualBrowser\User Data\global.dat` | `apiLink`、`jddjScheduleMs`、`jddjRefreshLeader` 等 |
+| `server-backend` `DATA_DIR/profiles/{tenantId}/{envId}/` | `snapshot.zip` + `meta.json` |
 
 ---
 
-## 3. 关键文件索引
+## 5. 关键文件
 
 | 路径 | 职责 |
 |------|------|
-| [`server/lib/profile-sync.js`](../../server/lib/profile-sync.js) | pack / unpack / getProfileLocalMeta |
-| [`server/lib/cloud-sync.js`](../../server/lib/cloud-sync.js) | upload / download / shouldPullFromCloud |
-| [`server/mock/native-bridge.js`](../../server/mock/native-bridge.js) | launch 前后 cloud 钩子 |
-| [`server/src/api/native.js`](../../server/src/api/native.js) | packProfile 等前端封装 |
-| [`server-backend/src/profiles/`](../../server-backend/src/profiles/) | Nest 快照 REST API |
-| [`server-backend/src/storage/`](../../server-backend/src/storage/) | 用户/会话存储抽象层 |
+| [`server/lib/profile-sync.js`](../../server/lib/profile-sync.js) | pack / unpack / hasLocalSyncData |
+| [`server/lib/cloud-sync.js`](../../server/lib/cloud-sync.js) | upload / download / shouldPull / shouldUpload |
+| [`server/lib/native-runtime.js`](../../server/lib/native-runtime.js) | launch pull、stop/exit upload、sync 状态 |
+| [`server/lib/session-worker.js`](../../server/lib/session-worker.js) | 会话、登录闸门、site-snapshot |
+| [`server/src/api/native.js`](../../server/src/api/native.js) | `applyCreateAutoRefreshDefaults`、`addBrowser` |
+| [`server-backend/src/browser/fingerprint.defaults.ts`](../../server-backend/src/browser/fingerprint.defaults.ts) | 创建缺省 + 自动刷新默认 |
+| [`server/src/views/browser/index.vue`](../../server/src/views/browser/index.vue) | 列表、责任机开关、定时刷新 |
 
 ---
 
-## 4. 已完成清单
+## 6. 已完成清单
 
-- [x] **5.1** 同步文件清单文档 — 见下文 §8
-- [x] **5.2** `packProfile` / `unpackProfile` / `getProfileLocalMeta` — `profile-sync.js`
-- [x] **5.3** native-bridge 集成 — pack/unpack/getProfileLocalMeta + launch 钩子
-- [x] **5.4** 云快照 API — GET/POST meta + zip — `server-backend`
-- [x] **5.5** 本地磁盘存储 — `data/profiles/{tenantId}/{envId}/`（legacy 兼容）
-- [x] **5.6** 生命周期 — launch 前 pull；exit 后 pack + upload（需 `CLOUD_API_TOKEN`）
-- [x] **5.x** smoke 测试 — envId=1，18 文件 pack/unpack 往返通过
+- [x] pack / unpack / 云快照 API / tenant 路径  
+- [x] launch 前 pull；exit/stop/会话 upload  
+- [x] 登录态闸门（`user` cookie）  
+- [x] 上传 version 闸门（`stale-local`）  
+- [x] sync 状态 `local-without-meta` 与 pull 对齐  
+- [x] 责任机 `jddjRefreshLeader`  
+- [x] 新建有 Cookie 默认开自动刷新  
 
----
+## 7. 待办（可选）
 
-## 5. 待办清单（细粒度）
-
-| ID | 任务 | 验收标准 | 优先级 | 依赖模块 |
-|----|------|----------|--------|----------|
-| 5.7 | 环境列表同步状态 UI {#57} | 显示 local/cloud version、状态标签 | **P0** | ✅ |
-| 5.8 | 「立即同步」按钮 {#58} | 手动 upload / pull / 刷新 | **P0** | ✅ |
-| 5.9 | 自动 token {#59} | bridge 使用登录 Bearer；`CLOUD_API_TOKEN` 可选兜底 | **P0** | ✅ dev |
-| 5.10 | 冲突策略 UI | 云端 version 更高时提示「将覆盖本地」 | P1 | 5.7 |
-| 5.11 | 体积上限 / 增量同步 | 大 profile 分片（可选） | P4 | — |
-| 5.12 | 跨机验收脚本 | 文档 + npm script A→B | **P0** | 5.9 |
-| 5.13 | tenant 路径隔离 | 与 [3.8](03-rbac-permissions.md#38) 一致 | **P0** | [03](03-rbac-permissions.md) |
-
----
-
-## 6. 手动验证步骤
-
-### 6.1 本地 pack
-
-```powershell
-curl -s -X POST http://localhost:9527/dev-native-bridge `
-  -H "Content-Type: application/json" `
-  -d '{"name":"getProfileLocalMeta","params":["1"]}'
-```
-
-### 6.2 云同步（dev：登录即可，无需手动 token）
-
-```powershell
-# 终端 1
-cd D:\bytesio\VirtualBrowser\server-backend
-npm run start:dev
-
-cd D:\bytesio\VirtualBrowser\server
-npm run dev
-# admin 登录 → 启动环境 → 关闭 → 日志 profile auto-pack + cloud upload ok
-# （可选）$env:CLOUD_API_TOKEN 仍可作为未登录调试兜底
-```
-
-### 6.3 跨机 pull
-
-删本地 `Workers\{envId}` 同步目录 + `ProfileSnapshots\{envId}\cloud-meta.json`，同 token 再启动 → 日志 `cloud pull ok`。
-
----
-
-## 7. 关联模块
-
-- **上游：** [02-auth-login](02-auth-login.md)（Bearer token）、[03-rbac](03-rbac-permissions.md)（快照归属）
-- **下游：** [00-native-bridge](00-native-bridge.md)（launch 生命周期）
-- **衔接：** [INTEGRATION §Auth→Cloud](../INTEGRATION.md#auth-cloud)、[§RBAC→Profile](../INTEGRATION.md#rbac-profile)
-
----
-
-## 8. 同步范围规范（原 PROFILE_SYNC.md）
-
-### 8.1 包含项
-
-仅打包 **Profile 目录**（`Default/`、`Profile */`）下 Cookie / Web 存储 / HTTP 缓存相关条目：
-
-| 相对路径 | 说明 |
-|----------|------|
-| `Network/Cookies` (+ journal) | Chromium 96+ Cookie |
-| `Cookies` (+ journal) | 旧版路径 |
-| `Local Storage/` | localStorage |
-| `IndexedDB/` | IndexedDB |
-| `Session Storage/` | sessionStorage |
-| `Cache/` | HTTP 磁盘缓存 |
-| `Code Cache/` | V8 / WASM |
-| `Service Worker/` | SW + CacheStorage |
-| `blob_storage/` | Blob 存储 |
-
-**不包含** `virtual.dat`（指纹配置仍走 JSON import/export）。
-
-### 8.2 排除项
-
-**Worker 根目录整目录跳过：** GPUCache、ShaderCache、component_crx_cache、Safe Browsing 等 Chrome 组件目录（完整列表见 git 历史 `docs/PROFILE_SYNC.md` 或 `profile-sync.js` 内 `EXCLUDE_DIR_NAMES`）。
-
-**Profile 内排除：** GPUCache、ShaderCache、GrShaderCache 等。
-
-**锁文件：** LOCK、LOG、SingletonLock 等。
-
-### 8.3 unpack 行为
-
-1. 解压前备份 `Workers/{envId}` → `Workers/{envId}.backup.{timestamp}`
-2. zip 内文件 **合并覆盖**（不删 zip 未含文件）
-3. 浏览器运行中勿 unpack
-
-### 8.4 Native API
-
-| 方法 | 参数 | 返回 |
-|------|------|------|
-| `packProfile` | `envId` | `{ path, size, meta }` |
-| `unpackProfile` | `envId`, `zipPath` | `{ backupPath, extracted, meta }` |
-| `getProfileLocalMeta` | `envId` | `{ fileCount, totalSize, files[] }` |
-
-### 8.5 云 API
-
-Base：`http://localhost:3001`（`CLOUD_API_BASE`）。Header：`Authorization: Bearer <token>`。
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/profiles/:envId/snapshot/meta` | `{ version, size, updatedAt, envId }` |
-| GET | `/api/profiles/:envId/snapshot` | zip 流 |
-| POST | `/api/profiles/:envId/snapshot` | raw body，`Content-Type: application/zip` |
-
-**version：** 每次上传递增；pull 时与本地 `cloud-meta.json` 比较。
-
-### 8.6 cloud-sync.js 函数
-
-| 函数 | 说明 |
-|------|------|
-| `getSnapshotMeta(envId, token)` | 云端 meta，无则 null |
-| `uploadSnapshot(envId, zipPath, token)` | 上传并写 `cloud-meta.json` |
-| `downloadSnapshot(envId, workerDir, token)` | 下载并 unpack |
-| `shouldPullFromCloud(envId, workerDir, token)` | 是否 pull |
-
-### 8.7 环境变量
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `CLOUD_API_BASE` | `http://localhost:3001` | 后端 URL |
-| `CLOUD_API_TOKEN` | 空 | **临时方案**；未设置则跳过云同步 |
-
-本地缓存：`ProfileSnapshots/{envId}/cloud-meta.json`
-
----
-
-## 9. native-bridge 行为摘要
-
-1. **launchBrowser 前：** 有 token → `shouldPullFromCloud` → 必要时 download + unpack  
-2. **exit 后：** auto-pack → 有 token → upload  
-3. **失败降级：** 无 token / 404 → 跳过云步骤，本地仍可用
+| ID | 任务 | 说明 |
+|----|------|------|
+| 5.10 | 冲突策略 UI | 过期上传时引导一键拉取 |
+| 5.11 | 体积上限 / 增量 | 大 profile 分片 |
+| — | 桌面壳常驻定时器 | 不依赖列表页是否打开 |

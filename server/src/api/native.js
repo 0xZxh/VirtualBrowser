@@ -525,8 +525,32 @@ export function scrubBrowserListUiFlags(rows) {
   return rows
 }
 
+/** 新建且已设 Cookie 时，默认打开自动刷新（显式开关不覆盖）。 */
+export function applyCreateAutoRefreshDefaults(item) {
+  if (!item || typeof item !== 'object') return item
+  const cookie = item.cookie
+  const hasCookies =
+    cookie &&
+    Number(cookie.mode) === 1 &&
+    Array.isArray(cookie.value) &&
+    cookie.value.length > 0
+  if (!hasCookies) return item
+  const hasAuto = item.autoJddj != null
+  const hasRefresh = item.jddjAutoRefresh != null
+  if (!hasAuto && !hasRefresh) {
+    item.autoJddj = true
+    item.jddjAutoRefresh = true
+  } else if (!hasAuto) {
+    item.autoJddj = !!item.jddjAutoRefresh
+  } else if (!hasRefresh) {
+    item.jddjAutoRefresh = !!item.autoJddj
+  }
+  return item
+}
+
 export async function addBrowser(item, defaultName) {
   const cleaned = stripBrowserUiFields(item) || item
+  applyCreateAutoRefreshDefaults(cleaned)
   if (getToken()) {
     const prefix = defaultName ? defaultName + ' ' : ''
     if (!cleaned.name) {

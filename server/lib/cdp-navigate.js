@@ -549,7 +549,7 @@ function matchUrlPatterns(url, patterns) {
  *   preferUrlRe?: RegExp,
  *   maxBodies?: number
  * }} [options]
- * @returns {Promise<{ bodies: Array<{ url: string, status: number, mimeType: string, body: string }>, pageUrl: string|null }>}
+ * @returns {Promise<{ bodies: Array<{ url: string, status: number, mimeType: string, body: string }>, pageUrl: string|null, urls: Array<{ url: string, status: number }> }>}
  */
 async function collectNetworkResponses(port, options = {}) {
   const collectMs = options.collectMs != null ? Number(options.collectMs) : 12000
@@ -562,6 +562,7 @@ async function collectNetworkResponses(port, options = {}) {
 
   const session = await openCdpSession(preferred.webSocketDebuggerUrl, collectMs + 30000)
   const bodies = []
+  const urls = []
   const seen = new Set()
   const pendingFetch = new Set()
 
@@ -576,6 +577,12 @@ async function collectNetworkResponses(port, options = {}) {
       if (!matchUrlPatterns(response.url, options.urlPatterns)) return
       if (seen.has(requestId) || bodies.length + pendingFetch.size >= maxBodies) return
       seen.add(requestId)
+      if (urls.length < 30) {
+        urls.push({
+          url: String(response.url || '').slice(0, 300),
+          status: response.status || 0
+        })
+      }
       pendingFetch.add(requestId)
       // slight delay so body is available
       setTimeout(() => {
@@ -613,7 +620,7 @@ async function collectNetworkResponses(port, options = {}) {
       await sleep(100)
     }
 
-    return { bodies, pageUrl: preferred.url || null }
+    return { bodies, pageUrl: preferred.url || null, urls }
   } finally {
     session.close()
   }

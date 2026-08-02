@@ -47,6 +47,8 @@ export class SqliteDatabaseService implements OnModuleDestroy {
       );
 
       CREATE INDEX IF NOT EXISTS idx_environments_owner ON environments(owner_id);
+      CREATE INDEX IF NOT EXISTS idx_environments_owner_group ON environments(owner_id, group_name);
+      CREATE INDEX IF NOT EXISTS idx_environments_tenant_group ON environments(tenant_id, group_name);
     `)
     console.log(`[storage] SQLite: ${dbPath}`)
   }

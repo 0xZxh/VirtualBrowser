@@ -914,6 +914,12 @@
           </el-col>
         </el-row>
         <el-input v-model="apiLink" placeholder="自建可留空（自动推导）；或填写完整 URL" />
+        <el-form-item :label="$t('browser.jddjRefreshLeader')" style="margin-top: 16px">
+          <el-switch v-model="jddjRefreshLeader" />
+          <div style="color: #909399; font-size: 12px; line-height: 1.5; margin-top: 6px">
+            {{ $t('browser.jddjRefreshLeaderHint') }}
+          </div>
+        </el-form-item>
       </el-form>
       <span slot="footer" class="dialog-footer">
         <el-button @click="showSetDialog = false">取消</el-button>
@@ -1131,6 +1137,8 @@ export default {
       selectedGroup: '默认分组',
       apiLink: '',
       Channel: 'selfhost',
+      /** 本机是否负责自动刷新（global.dat.jddjRefreshLeader，缺省 true） */
+      jddjRefreshLeader: true,
       saveApi: false,
       selectedRows: [],
       /** 跨刷新保留勾选（id 一律转 string） */
@@ -1686,8 +1694,17 @@ export default {
         this.$set(row, 'jddjAutoSaving', false)
       }
     },
+    isJddjRefreshLeader() {
+      const g = this.GlobalData || {}
+      // 缺省 true，保证单机行为与改前一致；多终端可在设置里关掉
+      return g.jddjRefreshLeader !== false
+    },
     startJddjSchedule() {
       this.stopJddjSchedule()
+      if (!this.isJddjRefreshLeader()) {
+        console.log('[jddj] schedule skipped: this PC is not refresh leader')
+        return
+      }
       const ms = Number((this.GlobalData && this.GlobalData.jddjScheduleMs) || 0) || 30 * 60 * 1000
       this._jddjScheduleTimer = setInterval(() => {
         this.runJddjScheduleTick().catch(err => {
@@ -1741,9 +1758,14 @@ export default {
           }),
           getGlobalData()
         ])
+        const prevLeader = this.isJddjRefreshLeader()
         this.GlobalData = globalData
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
+        this.jddjRefreshLeader = this.GlobalData.jddjRefreshLeader !== false
+        if (prevLeader !== this.isJddjRefreshLeader()) {
+          this.startJddjSchedule()
+        }
         this.list = scrubBrowserListUiFlags(result.items || [])
         this.listTotal = Number(result.total) || 0
         const maxPage = Math.max(1, Math.ceil(this.listTotal / (this.listQuery.limit || 20)) || 1)
@@ -1773,6 +1795,9 @@ export default {
       if (this._listBgTimer) {
         clearTimeout(this._listBgTimer)
       }
+      if (this._syncStatusToken) {
+        this._syncStatusToken.cancelled = true
+      }
       this._listBgTimer = setTimeout(() => {
         this._listBgTimer = null
         this.processUpdateData().catch(err => {
@@ -1782,23 +1807,35 @@ export default {
       }, 300)
     },
     async loadSyncStatuses() {
-      const rows = this.list || []
-      await Promise.all(
-        rows.map(async row => {
+      const token = { cancelled: false }
+      this._syncStatusToken = token
+      const rows = (this.list || []).slice()
+      if (!rows.length) return
+      const concurrency = 3
+      let cursor = 0
+      const worker = async () => {
+        while (!token.cancelled) {
+          const i = cursor++
+          if (i >= rows.length) break
+          const row = rows[i]
+          if (!row) continue
           this.$set(row, 'syncLoading', true)
           try {
             const status = await getProfileSyncStatus(String(row.id))
+            if (token.cancelled) break
             this.$set(row, 'syncStatus', status)
           } catch (err) {
+            if (token.cancelled) break
             this.$set(row, 'syncStatus', {
               status: 'error',
               cloudError: err.message || String(err)
             })
           } finally {
-            this.$set(row, 'syncLoading', false)
+            if (!token.cancelled) this.$set(row, 'syncLoading', false)
           }
-        })
-      )
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(concurrency, rows.length) }, () => worker()))
     },
     syncStatusTagType(status) {
       const map = {
@@ -1807,6 +1844,7 @@ export default {
         'local-newer': 'warning',
         'local-only': 'info',
         'cloud-only': 'info',
+        'local-without-meta': 'warning',
         'no-cloud': 'info',
         'no-auth': 'info',
         error: 'danger'
@@ -3067,6 +3105,7 @@ export default {
       const store = await getGlobalData()
       this.Channel = store.Channel || 'selfhost'
       this.apiLink = store.apiLink || (await getDefaultIpGeoApiLink())
+      this.jddjRefreshLeader = store.jddjRefreshLeader !== false
       this.showSetDialog = true
     },
     async saveSettings() {
@@ -3118,11 +3157,23 @@ export default {
       if (channel !== GlobalData.Channel) {
         await setGlobalData('Channel', channel)
       }
+      const leader = this.jddjRefreshLeader !== false
+      if (leader !== (GlobalData.jddjRefreshLeader !== false)) {
+        await setGlobalData('jddjRefreshLeader', leader)
+      }
+      this.GlobalData = {
+        ...(this.GlobalData || {}),
+        ...GlobalData,
+        apiLink: link,
+        Channel: channel,
+        jddjRefreshLeader: leader
+      }
+      this.startJddjSchedule()
 
       this.$notify({
         title: '保存成功',
         message:
-          'IP 查询 API 已写入本机 User Data/global.dat（与云端登录地址无关）。启动默认主页时会自动注入到指纹窗口。',
+          '设置已写入本机 User Data/global.dat（IP 库与自动刷新责任机；与云端登录地址无关）。',
         type: 'success',
         duration: 4000
       })

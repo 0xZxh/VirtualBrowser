@@ -38,6 +38,10 @@ const running = new Map()
 /** @type {Map<string, string>} */
 const cloudTokenByEnv = new Map()
 
+/** stopBrowser 已上传时，跳过紧随其后的 exit auto-pack，避免重复上传 */
+/** @type {Set<string>} */
+const skipNextAutoPack = new Set()
+
 /** @type {Map<string, number>} */
 const envDebugPorts = new Map()
 
@@ -79,6 +83,69 @@ function sanitizeEnvItemCookies(item) {
     })
   }
   return { ...item, cookie }
+}
+
+/**
+ * 本机 Worker 已有 Cookie/Storage 时不灌表单 Cookie，避免旧表单覆盖较新本地会话。
+ * 空环境仍允许注入（首次导入/登录需要）。
+ */
+function shouldInjectFormCookies(workerDir, cookie) {
+  if (
+    !cookie ||
+    Number(cookie.mode) !== 1 ||
+    !Array.isArray(cookie.value) ||
+    cookie.value.length === 0
+  ) {
+    return { inject: false, reason: 'no-form-cookies' }
+  }
+  if (profileSync.hasLocalSyncData(workerDir)) {
+    return { inject: false, reason: 'local-session-present' }
+  }
+  return { inject: true, reason: 'empty-local-profile' }
+}
+
+/**
+ * @returns {Promise<{ skipped: boolean, reason: string, ok?: number, fail?: number }>}
+ */
+async function maybeInjectFormCookies(envId, workerDir, debuggingPort, cookie, label) {
+  const id = String(envId)
+  const decision = shouldInjectFormCookies(workerDir, cookie)
+  if (!decision.inject) {
+    if (decision.reason === 'local-session-present') {
+      logNative('CDP cookie inject skipped', {
+        envId: id,
+        reason: decision.reason,
+        sessionMode: label === 'session'
+      })
+    }
+    return { skipped: true, reason: decision.reason }
+  }
+  const result = await cdpNavigate.injectCookies(debuggingPort, cookie.value, 15000)
+  console.log(
+    `[native-runtime] ${label} CDP cookie inject envId=`,
+    id,
+    'ok=',
+    result.ok,
+    'fail=',
+    result.fail
+  )
+  logNative('CDP cookie inject', {
+    envId: id,
+    ok: result.ok,
+    fail: result.fail,
+    sessionMode: label === 'session'
+  })
+  if (result.fail > 0 && result.errors && result.errors.length) {
+    console.warn(
+      '[native-runtime] CDP cookie inject errors:',
+      result.errors.slice(0, 5).join('; ')
+    )
+    warnNative('CDP cookie inject errors', {
+      envId: id,
+      errors: result.errors.slice(0, 5)
+    })
+  }
+  return { skipped: false, reason: decision.reason, ok: result.ok, fail: result.fail }
 }
 
 function parseGlobalDataPayload(raw) {
@@ -356,9 +423,7 @@ async function getEnvDebugInfo(envId) {
 async function pullProfileIfNeeded(id, req, options = {}) {
   const token = getCloudToken(req)
   if (!token) {
-    console.log(
-      '[native-runtime] cloud pull skipped: 未登录且无 CLOUD_API_TOKEN（请先登录管理 UI）'
-    )
+    logNative('cloud.pull', { envId: id, pulled: false, reason: 'no-token' })
     return { pulled: false, reason: 'no-token' }
   }
 
@@ -371,30 +436,36 @@ async function pullProfileIfNeeded(id, req, options = {}) {
   const doPull = async () => {
     const decision = await cloudSync.shouldPullFromCloud(id, workerDir, token)
     if (!decision.pull) {
-      console.log(
-        '[native-runtime] cloud pull: 本地已是最新 envId=',
-        id,
-        'reason=',
-        decision.reason
-      )
+      logNative('cloud.pull', {
+        envId: id,
+        pulled: false,
+        reason: decision.reason,
+        cloudVersion:
+          decision.cloudMeta && decision.cloudMeta.version != null
+            ? decision.cloudMeta.version
+            : null
+      })
       return { pulled: false, reason: decision.reason, cloudMeta: decision.cloudMeta }
     }
 
-    console.log(
-      '[native-runtime] cloud pull: 开始下载 envId=',
-      id,
-      'reason=',
-      decision.reason,
-      'cloudVersion=',
-      decision.cloudMeta && decision.cloudMeta.version
-    )
+    logNative('cloud.pull', {
+      envId: id,
+      pulled: true,
+      phase: 'download-start',
+      reason: decision.reason,
+      cloudVersion:
+        decision.cloudMeta && decision.cloudMeta.version != null
+          ? decision.cloudMeta.version
+          : null
+    })
     const result = await cloudSync.downloadSnapshot(id, workerDir, token)
-    console.log(
-      '[native-runtime] cloud pull ok: envId=',
-      id,
-      'extracted=',
-      result && result.extracted
-    )
+    logNative('cloud.pull', {
+      envId: id,
+      pulled: true,
+      phase: 'download-ok',
+      reason: decision.reason,
+      extracted: result && result.extracted
+    })
     return {
       pulled: true,
       reason: decision.reason,
@@ -421,7 +492,7 @@ async function pullProfileIfNeeded(id, req, options = {}) {
     return result
   } catch (err) {
     console.error('[native-runtime] cloud pull failed:', err.message)
-    warnNative('cloud pull fail-soft', { envId: id, error: err.message })
+    warnNative('cloud.pull', { envId: id, pulled: false, reason: 'error', error: err.message })
     return { pulled: false, reason: 'error', error: err.message }
   }
 }
@@ -471,6 +542,12 @@ async function getProfileSyncStatus(id, req) {
     status = localMeta.fileCount > 0 ? 'local-only' : 'no-cloud'
   } else if (!localMeta.fileCount && !localCloudMeta) {
     status = 'cloud-only'
+  } else if (
+    localMeta.fileCount > 0 &&
+    (!localCloudMeta || localCloudMeta.version == null)
+  ) {
+    // 与 shouldPullFromCloud 的 local-without-meta 一致：有本机会话但无 meta，自动 pull 不会覆盖
+    status = 'local-without-meta'
   } else if (!localCloudMeta || localCloudMeta.version == null) {
     status = 'cloud-newer'
   } else if (cloudMeta.version > localCloudMeta.version) {
@@ -499,12 +576,30 @@ async function syncProfileToCloud(id, req) {
     throw new Error('请先关闭该指纹浏览器再上传')
   }
 
+  const loggedIn = sessionWorker.isLocalProfileLoggedIn(id)
+  if (!loggedIn) {
+    warnNative('manual.upload', {
+      envId: String(id),
+      skipped: true,
+      reason: 'no-user-cookie',
+      loggedIn: false
+    })
+    throw new Error('未登录到家（缺少 Cookie user），已跳过上传到云端')
+  }
+
   const workerDir = path.join(workersRoot, id)
   const outDir = profileSync.getSnapshotsDir(id)
   ensureDir(outDir)
   const outPath = path.join(outDir, `profile-${Date.now()}.zip`)
   const packed = profileSync.packProfile(workerDir, { outputPath: outPath })
   const meta = await uploadPackedSnapshot(id, packed.path, req)
+  logNative('manual.upload', {
+    envId: String(id),
+    ok: true,
+    loggedIn: true,
+    reason: 'ok',
+    version: meta && meta.version
+  })
   return { action: 'upload', packed, meta }
 }
 
@@ -516,15 +611,24 @@ async function syncProfileFromCloud(id, req) {
 
   const token = getCloudToken(req)
   if (!token) {
+    warnNative('cloud.pull.manual', { envId: id, error: 'no-token' })
     throw new Error('请先登录')
   }
 
   const workerDir = path.join(workersRoot, id)
   ensureDir(workerDir)
+  logNative('cloud.pull.manual', { envId: id, phase: 'start' })
   const result = await cloudSync.downloadSnapshot(id, workerDir, token)
   if (!result) {
+    warnNative('cloud.pull.manual', { envId: id, result: 'no-snapshot' })
     throw new Error('云端无快照')
   }
+  logNative('cloud.pull.manual', {
+    envId: id,
+    phase: 'ok',
+    extracted: result.extracted,
+    version: result.cloudMeta && result.cloudMeta.version
+  })
   return { action: 'pull', ...result }
 }
 
@@ -736,6 +840,7 @@ function attachExitHandler(proc, id, workerDir, req) {
         'currentPid=',
         current && current.pid
       )
+      skipNextAutoPack.delete(id)
       // 仍清扫孤儿，但保护 Map 里正在跑的新进程
       const except = []
       if (current && current.pid) except.push(current.pid)
@@ -783,7 +888,15 @@ function attachExitHandler(proc, id, workerDir, req) {
         'code=',
         code
       )
+      warnNative('exit.upload', { envId: id, skipped: true, reason: 'abnormal-exit', code })
       cloudTokenByEnv.delete(id)
+      skipNextAutoPack.delete(id)
+      return
+    }
+    if (skipNextAutoPack.has(id)) {
+      skipNextAutoPack.delete(id)
+      cloudTokenByEnv.delete(id)
+      logNative('exit.upload', { envId: id, skipped: true, reason: 'stop-already-uploaded' })
       return
     }
     const exitToken = cloudTokenByEnv.get(id)
@@ -793,6 +906,7 @@ function attachExitHandler(proc, id, workerDir, req) {
       : null
     ;(async () => {
       try {
+        const loggedIn = sessionWorker.isLocalProfileLoggedIn(id)
         const outDir = profileSync.getSnapshotsDir(id)
         ensureDir(outDir)
         const outPath = path.join(outDir, `profile-${Date.now()}.zip`)
@@ -803,9 +917,41 @@ function attachExitHandler(proc, id, workerDir, req) {
           'size=',
           packed.size
         )
-        await uploadPackedSnapshot(id, packed.path, exitReq)
+        if (!exitToken) {
+          warnNative('exit.upload', {
+            envId: id,
+            skipped: true,
+            reason: 'no-token',
+            loggedIn,
+            path: packed.path,
+            size: packed.size
+          })
+          return
+        }
+        if (!loggedIn) {
+          warnNative('exit.upload', {
+            envId: id,
+            skipped: true,
+            reason: 'no-user-cookie',
+            loggedIn: false,
+            path: packed.path,
+            size: packed.size
+          })
+          return
+        }
+        const meta = await uploadPackedSnapshot(id, packed.path, exitReq)
+        logNative('exit.upload', {
+          envId: id,
+          ok: true,
+          loggedIn: true,
+          reason: 'ok',
+          path: packed.path,
+          size: packed.size,
+          version: meta && meta.version
+        })
       } catch (err) {
         console.error('[native-runtime] profile auto-pack failed:', err.message)
+        warnNative('exit.upload', { envId: id, error: err.message })
       }
     })()
   })
@@ -1030,44 +1176,15 @@ async function launchBrowser(envId, req, options = {}) {
         }
       }
 
-      // Cookie 表单 mode=1 时用 CDP Network.setCookie 强制注入（不依赖内核读 virtual.dat）
+      // Cookie 表单 mode=1：仅空本地会话时 CDP 注入；已有本地会话则跳过，避免旧表单覆盖
       try {
-        const cookie = item && item.cookie
-        if (
-          cookie &&
-          Number(cookie.mode) === 1 &&
-          Array.isArray(cookie.value) &&
-          cookie.value.length > 0
-        ) {
-          const result = await cdpNavigate.injectCookies(
-            debuggingPort,
-            cookie.value,
-            15000
-          )
-          console.log(
-            '[native-runtime] CDP cookie inject envId=',
-            id,
-            'ok=',
-            result.ok,
-            'fail=',
-            result.fail
-          )
-          logNative('CDP cookie inject', {
-            envId: id,
-            ok: result.ok,
-            fail: result.fail
-          })
-          if (result.fail > 0 && result.errors && result.errors.length) {
-            console.warn(
-              '[native-runtime] CDP cookie inject errors:',
-              result.errors.slice(0, 5).join('; ')
-            )
-            warnNative('CDP cookie inject errors', {
-              envId: id,
-              errors: result.errors.slice(0, 5)
-            })
-          }
-        }
+        await maybeInjectFormCookies(
+          id,
+          workerDir,
+          debuggingPort,
+          item && item.cookie,
+          'launch'
+        )
       } catch (err) {
         console.error('[native-runtime] CDP cookie inject failed:', err.message)
         errorNative('CDP cookie inject failed', {
@@ -1086,7 +1203,9 @@ async function launchBrowser(envId, req, options = {}) {
           })
           logNative('launch cookie sync-out', {
             envId: id,
-            cookieCount: synced.cookieCount
+            cookieCount: synced.cookieCount,
+            loggedIn: !!synced.loggedIn,
+            cloudPut: synced.cloudPut || null
           })
         }
       } catch (err) {
@@ -1097,30 +1216,16 @@ async function launchBrowser(envId, req, options = {}) {
       }
     })()
   } else {
-    // 会话模式仍注入 cookie（mode=1），便于打开到家后台已登录
+    // 会话模式：空本地会话才注入表单 Cookie；已有本地会话则信任磁盘登录态
     ;(async () => {
       try {
-        const cookie = item && item.cookie
-        if (
-          cookie &&
-          Number(cookie.mode) === 1 &&
-          Array.isArray(cookie.value) &&
-          cookie.value.length > 0
-        ) {
-          const result = await cdpNavigate.injectCookies(
-            debuggingPort,
-            cookie.value,
-            15000
-          )
-          console.log(
-            '[native-runtime] session CDP cookie inject envId=',
-            id,
-            'ok=',
-            result.ok,
-            'fail=',
-            result.fail
-          )
-        }
+        await maybeInjectFormCookies(
+          id,
+          workerDir,
+          debuggingPort,
+          item && item.cookie,
+          'session'
+        )
       } catch (err) {
         console.error('[native-runtime] session cookie inject failed:', err.message)
       }
@@ -1136,25 +1241,35 @@ async function launchBrowser(envId, req, options = {}) {
   }
 }
 
-async function stopBrowser(envId, req) {
+/**
+ * @param {string|number} envId
+ * @param {object} req
+ * @param {{ skipProfileUpload?: boolean }} [options] 会话任务已上传时可跳过，避免重复
+ */
+async function stopBrowser(envId, req, options = {}) {
   const id = String(envId)
   const workerDir = path.join(workersRoot, id)
   const proc = running.get(id)
   const debugPort = getEnvDebugPort(id)
   const token = getCloudToken(req) || cloudTokenByEnv.get(id)
+  const skipProfileUpload = options.skipProfileUpload === true
 
-  // 关闭前 CDP 回写 cookie（续期），失败不阻断关闭
+  // 关闭前 CDP 回写 cookie（续期），失败不阻断关闭；有 user 才上云
+  let cookieLoggedIn = null
   if (proc && proc.exitCode == null && !proc.killed && debugPort) {
     try {
       const synced = await sessionWorker.syncCookiesFromCdp(id, debugPort, token, {
         timeoutMs: 8000
       })
-      logNative('stop cookie sync-out', {
+      cookieLoggedIn = !!synced.loggedIn
+      logNative('stop.cookie', {
         envId: id,
-        cookieCount: synced.cookieCount
+        cookieCount: synced.cookieCount,
+        loggedIn: cookieLoggedIn,
+        cloudPut: synced.cloudPut || null
       })
     } catch (err) {
-      warnNative('stop cookie sync-out failed', {
+      warnNative('stop.cookie', {
         envId: id,
         error: err && err.message ? err.message : String(err)
       })
@@ -1174,11 +1289,69 @@ async function stopBrowser(envId, req) {
       killPidTree(pid)
     }
   }
+  // 标记已由 stop 负责上传，避免 exit 重复（若 exit 仍走到 upload）
+  skipNextAutoPack.add(id)
   running.delete(id)
   releaseDebugPortForEnv(id)
   // 无论是否在 running Map：扫同 env 的残留子进程（关窗后常见）
   const swept = killStaleWorkerProcesses(id, workerDir)
   clearSessionStartupPollution(workerDir)
+
+  // 杀进程后再 pack+upload：stop 会删 running，exit auto-pack 常被当成 superseded 跳过
+  if (skipProfileUpload) {
+    logNative('stop.upload', { envId: id, skipped: true, reason: 'already-uploaded-by-session' })
+  } else {
+    try {
+      await new Promise(r => setTimeout(r, 400))
+      const loggedIn =
+        cookieLoggedIn != null ? cookieLoggedIn : sessionWorker.isLocalProfileLoggedIn(id)
+      ensureDir(workerDir)
+      const outDir = profileSync.getSnapshotsDir(id)
+      ensureDir(outDir)
+      const outPath = path.join(outDir, `profile-stop-${Date.now()}.zip`)
+      const packed = profileSync.packProfile(workerDir, { outputPath: outPath })
+      if (!token) {
+        warnNative('stop.upload', {
+          envId: id,
+          skipped: true,
+          reason: 'no-token',
+          loggedIn,
+          path: packed.path,
+          size: packed.size
+        })
+      } else if (!loggedIn) {
+        warnNative('stop.upload', {
+          envId: id,
+          skipped: true,
+          reason: 'no-user-cookie',
+          loggedIn: false,
+          path: packed.path,
+          size: packed.size
+        })
+      } else {
+        const stopReq =
+          req && req.headers && req.headers.authorization
+            ? req
+            : { headers: { authorization: `Bearer ${token}` } }
+        const meta = await uploadPackedSnapshot(id, packed.path, stopReq)
+        logNative('stop.upload', {
+          envId: id,
+          ok: true,
+          loggedIn: true,
+          reason: 'ok',
+          path: packed.path,
+          size: packed.size,
+          version: meta && meta.version
+        })
+      }
+    } catch (err) {
+      warnNative('stop.upload', {
+        envId: id,
+        error: err && err.message ? err.message : String(err)
+      })
+    }
+  }
+
   console.log(
     '[native-runtime] stopBrowser envId=',
     id,
@@ -1359,7 +1532,7 @@ async function handleNativeCall(name, params = [], req) {
       return { ok: true }
     }
     case 'stopBrowser':
-      return stopBrowser(params[0], req)
+      return stopBrowser(params[0], req, params[1] || {})
     case 'getRuningBrowser':
       return getRunningIds()
     case 'getEnvDebugPort':
@@ -1368,6 +1541,10 @@ async function handleNativeCall(name, params = [], req) {
       return getEnvDebugInfo(params[0])
     case 'getLogsDir':
       return getLogsDir()
+    case 'downloadLogsZip': {
+      const { packLogsZip } = require('./file-logger')
+      return packLogsZip()
+    }
     case 'appendUiLog': {
       const level = String((params[0] && params[0].level) || 'INFO').toUpperCase()
       const message = String((params[0] && params[0].message) || '')

@@ -4,6 +4,7 @@
 const cdpNavigate = require('./cdp-navigate')
 const selectors = require('./jddj-selectors')
 const { extractShopIdFromPayload } = require('./jddj-shop-id')
+const { logNative, warnNative } = require('./file-logger')
 
 function emptyResult(partial = {}) {
   return {
@@ -16,6 +17,30 @@ function emptyResult(partial = {}) {
     ok: false,
     error: null,
     ...partial
+  }
+}
+
+function logScrapeResult(result, extra = {}) {
+  const meta = {
+    runId: extra.runId || null,
+    envId: extra.envId || null,
+    hasShopId: !!(result && result.shopId),
+    shopId: (result && result.shopId) || null,
+    shopIdSource: (result && result.shopIdSource) || null,
+    hasShopName: !!(result && result.shopName),
+    businessStatus: (result && result.businessStatus) || null,
+    ok: !!(result && result.ok),
+    error: (result && result.error) || null,
+    looksLogin: extra.looksLogin === true,
+    href: extra.href || null,
+    orderCount: result && Array.isArray(result.orders) ? result.orders.length : 0,
+    networkUrlCount: extra.networkUrlCount != null ? extra.networkUrlCount : undefined,
+    parsedBodies: extra.parsedBodies != null ? extra.parsedBodies : undefined
+  }
+  if (meta.hasShopId && meta.ok) {
+    logNative('[jddj-scraper] scrape ok', meta)
+  } else {
+    warnNative('[jddj-scraper] scrape incomplete', meta)
   }
 }
 
@@ -380,11 +405,12 @@ function buildDomEvalScript() {
 
 /**
  * @param {number} port CDP debugging port
- * @param {{ entryUrl?: string, collectMs?: number }} [options]
+ * @param {{ entryUrl?: string, collectMs?: number, logContext?: { runId?: string, envId?: string } }} [options]
  */
 async function scrapeJddj(port, options = {}) {
   const entryUrl = String(options.entryUrl || selectors.DEFAULT_ENTRY_URL).trim()
   const collectMs = options.collectMs != null ? Number(options.collectMs) : 14000
+  const logCtx = options.logContext && typeof options.logContext === 'object' ? options.logContext : {}
   const fetchedAt = new Date().toISOString()
   const merged = {
     shopName: null,
@@ -396,11 +422,19 @@ async function scrapeJddj(port, options = {}) {
 
   try {
     await cdpNavigate.waitForCdpReady(port, 15000)
+    const navAt = Date.now()
     await cdpNavigate.navigateToUrl(port, entryUrl, 20000)
     await new Promise(r => setTimeout(r, 1500))
+    logNative('jddj.scrape.navigate', {
+      runId: logCtx.runId || null,
+      envId: logCtx.envId || null,
+      url: entryUrl,
+      elapsedMs: Date.now() - navAt
+    })
 
     // 1) Network intercept
-    let net = { bodies: [] }
+    let net = { bodies: [], urls: [] }
+    let parsedBodies = 0
     try {
       net = await cdpNavigate.collectNetworkResponses(port, {
         urlPatterns: selectors.XHR_URL_PATTERNS,
@@ -409,14 +443,28 @@ async function scrapeJddj(port, options = {}) {
         preferUrlRe: /jddj\.com/i,
         maxBodies: 40
       })
+      logNative('jddj.scrape.network', {
+        runId: logCtx.runId || null,
+        envId: logCtx.envId || null,
+        persisted: false,
+        urlCount: Array.isArray(net.urls) ? net.urls.length : 0,
+        bodyCount: Array.isArray(net.bodies) ? net.bodies.length : 0,
+        pageUrl: net.pageUrl || null,
+        urls: (net.urls || []).slice(0, 30)
+      })
     } catch (err) {
       // fail soft → DOM
-      console.warn('[jddj-scraper] network intercept failed:', err.message)
+      warnNative('jddj.scrape.network', {
+        runId: logCtx.runId || null,
+        envId: logCtx.envId || null,
+        error: err.message
+      })
     }
 
     for (const item of net.bodies || []) {
       const json = tryParseJson(item.body)
       if (!json) continue
+      parsedBodies += 1
       const part = extractFromJsonPayload(json)
       mergeExtract(merged, {
         shopName: part.shopName,
@@ -434,18 +482,44 @@ async function scrapeJddj(port, options = {}) {
         preferUrlRe: /jddj\.com/i,
         timeoutMs: 15000
       })
+      logNative('jddj.scrape.dom', {
+        runId: logCtx.runId || null,
+        envId: logCtx.envId || null,
+        href: (dom && dom.href) || null,
+        looksLogin: !!(dom && dom.looksLogin),
+        shopIdSource: (dom && dom.shopIdSource) || null,
+        hasShopId: !!(dom && dom.shopId),
+        hasShopName: !!(dom && dom.shopName)
+      })
     } catch (err) {
-      console.warn('[jddj-scraper] DOM evaluate failed:', err.message)
+      warnNative('jddj.scrape.dom', {
+        runId: logCtx.runId || null,
+        envId: logCtx.envId || null,
+        error: err.message
+      })
+    }
+
+    const scrapeExtra = {
+      runId: logCtx.runId || null,
+      envId: logCtx.envId || null,
+      networkUrlCount: Array.isArray(net.urls) ? net.urls.length : 0,
+      parsedBodies
     }
 
     if (dom) {
       if (dom.looksLogin && !merged.shopName && !merged.shopId && !merged.orders.length) {
-        return emptyResult({
+        const loginFail = emptyResult({
           fetchedAt,
           ok: false,
           error: '登录失效或未登录京东到家商家后台',
           businessStatus: '未知'
         })
+        logScrapeResult(loginFail, {
+          ...scrapeExtra,
+          looksLogin: true,
+          href: dom.href || null
+        })
+        return loginFail
       }
       // DOM store-id / localStorage / 店头状态优先于 XHR
       const domStatus = dom.businessStatus
@@ -490,14 +564,20 @@ async function scrapeJddj(port, options = {}) {
       (merged.orders && merged.orders.length > 0)
 
     if (!hasSignal) {
-      return emptyResult({
+      const noSignal = emptyResult({
         fetchedAt,
         ok: false,
         error: '未能解析店铺/营业状态/订单（可能未登录或页面结构变更）'
       })
+      logScrapeResult(noSignal, {
+        ...scrapeExtra,
+        looksLogin: !!(dom && dom.looksLogin),
+        href: (dom && dom.href) || null
+      })
+      return noSignal
     }
 
-    return {
+    const okResult = {
       shopName: merged.shopName,
       shopId: merged.shopId || null,
       shopIdSource: merged.shopIdSource || null,
@@ -507,12 +587,23 @@ async function scrapeJddj(port, options = {}) {
       ok: true,
       error: null
     }
+    logScrapeResult(okResult, {
+      ...scrapeExtra,
+      looksLogin: !!(dom && dom.looksLogin),
+      href: (dom && dom.href) || null
+    })
+    return okResult
   } catch (err) {
-    return emptyResult({
+    const fail = emptyResult({
       fetchedAt,
       ok: false,
       error: (err && err.message) || String(err)
     })
+    logScrapeResult(fail, {
+      runId: logCtx.runId || null,
+      envId: logCtx.envId || null
+    })
+    return fail
   }
 }
 

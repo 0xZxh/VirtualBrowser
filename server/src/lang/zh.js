@@ -83,6 +83,7 @@ export default {
       'local-newer': '本地较新',
       'local-only': '仅本地',
       'cloud-only': '仅云端',
+      'local-without-meta': '本机有会话未对齐云端（不会自动覆盖）',
       'no-cloud': '无云端快照',
       'no-auth': '未登录',
       error: '查询失败',
@@ -99,6 +100,9 @@ export default {
     jddjColumn: '店铺信息',
     jddjRefresh: '刷新店铺',
     jddjAutoRefresh: '启用自动刷新（约每 30 分钟）',
+    jddjRefreshLeader: '本机负责自动刷新',
+    jddjRefreshLeaderHint:
+      '多终端时仅一台开启：只有本机定时刷新店铺。关闭后本机不再跑自动刷新（仍可手动刷新）',
     jddjOrdersTitle: '店铺订单',
     jddjOrdersHint: '点击查看订单列表',
     jddjOrderId: '订单号',

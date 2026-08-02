@@ -83,6 +83,7 @@ export default {
       'local-newer': 'Local newer',
       'local-only': 'Local only',
       'cloud-only': 'Cloud only',
+      'local-without-meta': 'Local session present, not aligned with cloud (auto-pull skipped)',
       'no-cloud': 'No cloud snapshot',
       'no-auth': 'Not logged in',
       error: 'Query failed',
@@ -101,6 +102,9 @@ export default {
     jddjColumn: 'Store info',
     jddjRefresh: 'Refresh store',
     jddjAutoRefresh: 'Auto refresh (~every 30 min)',
+    jddjRefreshLeader: 'This PC runs auto refresh',
+    jddjRefreshLeaderHint:
+      'For multi-PC: enable on only one machine. When off, this PC skips the schedule (manual refresh still works)',
     jddjOrdersTitle: 'Store orders',
     jddjOrdersHint: 'Click to view orders',
     jddjOrderId: 'Order ID',

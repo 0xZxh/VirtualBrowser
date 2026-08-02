@@ -1,13 +1,14 @@
 const fs = require('fs')
 const path = require('path')
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
 const { handleNativeIpc, nativeRuntime } = require('./native-ipc')
 const { appRoot } = require('./paths')
 const { getLogsDir } = require(path.join(appRoot, 'config/vb-paths'))
 const {
   logDesktop,
   errorDesktop,
-  ensureLogsDir
+  ensureLogsDir,
+  packLogsZip
 } = require(path.join(appRoot, 'server/lib/file-logger'))
 
 function readClientConfig() {
@@ -118,6 +119,23 @@ ipcMain.handle('desktop-open-log-folder', async () => {
     throw new Error(err)
   }
   return { ok: true, path: dir }
+})
+
+ipcMain.handle('desktop-download-logs', async () => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const defaultName = `xianfu-logs-${stamp}.zip`
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  const save = await dialog.showSaveDialog(win, {
+    title: '下载日志包',
+    defaultPath: path.join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'Zip', extensions: ['zip'] }]
+  })
+  if (save.canceled || !save.filePath) {
+    return { ok: false, canceled: true }
+  }
+  const packed = packLogsZip(save.filePath)
+  logDesktop('logs zip saved', { path: packed.path, files: packed.files })
+  return { ok: true, path: packed.path, files: packed.files }
 })
 
 ipcMain.handle('desktop-open-devtools', async () => {

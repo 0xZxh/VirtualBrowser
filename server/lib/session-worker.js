@@ -86,6 +86,24 @@ function getCloudToken(req) {
   return process.env.CLOUD_API_TOKEN || ''
 }
 
+/** @type {{ runId: string, envId: string } | null} */
+let activeRunContext = null
+
+function topCookieDomains(cookies, limit = 8) {
+  const map = Object.create(null)
+  for (const c of Array.isArray(cookies) ? cookies : []) {
+    const d = String((c && c.domain) || '')
+      .replace(/^\./, '')
+      .trim()
+    if (!d) continue
+    map[d] = (map[d] || 0) + 1
+  }
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([domain, count]) => ({ domain, count }))
+}
+
 async function cloudApiJson(method, apiPath, token, body, timeoutMs = 20000) {
   if (!token) throw new Error('未登录，无法调用云端 API')
   const url = `${cloudSync.getCloudApiBase()}${apiPath}`
@@ -100,6 +118,7 @@ async function cloudApiJson(method, apiPath, token, body, timeoutMs = 20000) {
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const t0 = Date.now()
   try {
     const res = await fetch(url, { ...opts, signal: controller.signal })
     const text = await res.text().catch(() => '')
@@ -109,11 +128,22 @@ async function cloudApiJson(method, apiPath, token, body, timeoutMs = 20000) {
     } catch {
       json = null
     }
+    const elapsedMs = Date.now() - t0
+    const meta = {
+      runId: activeRunContext && activeRunContext.runId,
+      envId: activeRunContext && activeRunContext.envId,
+      method,
+      path: apiPath,
+      status: res.status,
+      elapsedMs
+    }
     if (!res.ok) {
+      warnNative('jddj.api.cloud', { ...meta, error: text.slice(0, 200) })
       throw new Error(
         `cloud API ${method} ${apiPath} failed (${res.status}): ${text.slice(0, 200)}`
       )
     }
+    logNative('jddj.api.cloud', meta)
     return json && json.data !== undefined ? json.data : json
   } finally {
     clearTimeout(timer)
@@ -177,6 +207,42 @@ function writeCookiesToLocalProfile(envId, cookies) {
   return { cookieCount: normalized.length, item }
 }
 
+/**
+ * 到家登录判定：存在 name===user 且 value 非空的 cookie。
+ */
+function hasJddjUserCookie(cookies) {
+  return (Array.isArray(cookies) ? cookies : []).some(
+    c => c && String(c.name) === 'user' && String(c.value != null ? c.value : '').trim() !== ''
+  )
+}
+
+/** 从本地 browser-list / virtual.dat 读取环境 cookie.value */
+function readCookiesFromLocalProfile(envId) {
+  const id = String(envId)
+  const listFile = getBrowserListFile()
+  const data = readJson(listFile, { users: [] })
+  const users = Array.isArray(data.users) ? data.users : []
+  const item = users.find(u => String(u.id) === id)
+  if (item && item.cookie && Array.isArray(item.cookie.value)) {
+    return item.cookie.value
+  }
+  try {
+    const datPath = path.join(getWorkersRoot(), id, 'virtual.dat')
+    const dat = readJson(datPath, { users: [] })
+    const u = Array.isArray(dat.users) && dat.users[0] ? dat.users[0] : null
+    if (u && u.cookie && Array.isArray(u.cookie.value)) {
+      return u.cookie.value
+    }
+  } catch {
+    // ignore
+  }
+  return []
+}
+
+function isLocalProfileLoggedIn(envId) {
+  return hasJddjUserCookie(readCookiesFromLocalProfile(envId))
+}
+
 async function persistCookiesToBackend(envId, cookies, token) {
   if (!token) return { skipped: true, reason: 'no-token' }
   const normalized = (Array.isArray(cookies) ? cookies : [])
@@ -192,23 +258,54 @@ async function persistCookiesToBackend(envId, cookies, token) {
 }
 
 /**
- * CDP 读 cookie → 写本地 profile + 后端（fail-soft 由调用方 catch）。
- * @returns {{ cookieCount: number, cookies: object[] }}
+ * CDP 读 cookie → 写本地 profile；仅登录态（有 user cookie）才 PUT 上云。
+ * @returns {{ cookieCount: number, cookies: object[], loggedIn: boolean, cloudPut: string }}
  */
 async function syncCookiesFromCdp(envId, port, token, options = {}) {
   const timeoutMs = options.timeoutMs != null ? Number(options.timeoutMs) : 15000
   const all = await cdpNavigate.getAllCookies(port, timeoutMs)
   const cookies = all.cookies || []
+  const loggedIn = hasJddjUserCookie(cookies)
   const local = writeCookiesToLocalProfile(envId, cookies)
-  try {
-    await persistCookiesToBackend(envId, cookies, token)
-  } catch (err) {
-    warnNative('persist cookies to backend failed', {
+  let cloudPut = 'skipped'
+  if (!token) {
+    cloudPut = 'skipped-no-token'
+    logNative('cookie.sync', {
       envId: String(envId),
-      error: (err && err.message) || String(err)
+      loggedIn,
+      cloudPut,
+      reason: 'no-token',
+      cookieCount: local.cookieCount
     })
+  } else if (!loggedIn) {
+    cloudPut = 'skipped-no-user-cookie'
+    warnNative('cookie.sync skipped cloud', {
+      envId: String(envId),
+      loggedIn: false,
+      reason: 'no-user-cookie',
+      cookieCount: local.cookieCount
+    })
+  } else {
+    try {
+      await persistCookiesToBackend(envId, cookies, token)
+      cloudPut = 'ok'
+      logNative('cookie.sync', {
+        envId: String(envId),
+        loggedIn: true,
+        cloudPut,
+        reason: 'ok',
+        cookieCount: local.cookieCount
+      })
+    } catch (err) {
+      cloudPut = 'error'
+      warnNative('persist cookies to backend failed', {
+        envId: String(envId),
+        loggedIn: true,
+        error: (err && err.message) || String(err)
+      })
+    }
   }
-  return { cookieCount: local.cookieCount, cookies }
+  return { cookieCount: local.cookieCount, cookies, loggedIn, cloudPut }
 }
 
 async function persistSiteSnapshot(envId, jddj, token) {
@@ -245,37 +342,64 @@ async function runSessionJob(runtime, envId, req, options = {}) {
   const entryUrl = String(options.entryUrl || jddjSelectors.DEFAULT_ENTRY_URL).trim()
   const token = getCloudToken(req)
   const startedAt = Date.now()
+  const runId = `jddj-${id}-${startedAt}`
+  const prevCtx = activeRunContext
+  activeRunContext = { runId, envId: id }
 
-  logNative('session-worker start', { envId: id, scrape, entryUrl })
+  const queueDepth = queue.length
+  logNative('jddj.run.start', {
+    runId,
+    envId: id,
+    scrape,
+    entryUrl,
+    queueDepth,
+    active,
+    hasToken: !!token,
+    trigger: options.trigger || (scrape ? 'jddj-fetch' : 'session-keepalive')
+  })
 
   const runningIds = runtime.getRunningIds()
   if (runningIds.includes(id)) {
+    activeRunContext = prevCtx
     throw new Error(`环境 ${id} 已在运行，请先关闭后再跑会话任务`)
   }
 
   // 1) 云端较新则 pull（超时 fail-soft）
-  let pull = { attempted: false, ok: false, error: null }
+  let pull = { attempted: false, ok: false, error: null, result: null }
   try {
     pull.attempted = true
-    await withTimeout(
+    pull.result = await withTimeout(
       runtime.pullProfileIfNeeded(id, req, { timeoutMs: pullTimeoutMs }),
       pullTimeoutMs + 2000,
       'pullProfileIfNeeded'
     )
     pull.ok = true
+    logNative('jddj.pull', {
+      runId,
+      envId: id,
+      pulled: !!(pull.result && pull.result.pulled),
+      reason: (pull.result && pull.result.reason) || null,
+      cloudVersion:
+        pull.result && pull.result.cloudMeta && pull.result.cloudMeta.version != null
+          ? pull.result.cloudMeta.version
+          : null
+    })
   } catch (err) {
     pull.error = (err && err.message) || String(err)
-    warnNative('session pull fail-soft', { envId: id, error: pull.error })
+    warnNative('jddj.pull', { runId, envId: id, error: pull.error, failSoft: true })
   }
 
   let launchResult = null
   let killTimer = null
-  let cookiesResult = { cookieCount: 0 }
+  let cookiesResult = { cookieCount: 0, loggedIn: false, cloudPut: null }
   let upload = { ok: false, skipped: false, error: null }
   let jddj = null
+  let runError = null
+  let port = null
 
   try {
     // 2) 启动（最小化 / headless 降级；跳过默认 startup 导航）
+    const launchAt = Date.now()
     launchResult = await runtime.launchBrowser(id, req, {
       headlessHint: true,
       minimize: true,
@@ -285,29 +409,56 @@ async function runSessionJob(runtime, envId, req, options = {}) {
       autoCloseMs: sessionTimeoutMs
     })
 
-    const port = launchResult && launchResult.debuggingPort
+    port = launchResult && launchResult.debuggingPort
+    logNative('jddj.launch', {
+      runId,
+      envId: id,
+      debuggingPort: port || null,
+      sessionMode: true,
+      elapsedMs: Date.now() - launchAt
+    })
     if (!port) {
       throw new Error('会话启动成功但无 debuggingPort')
     }
 
     // 强制超时杀进程
     killTimer = setTimeout(() => {
-      warnNative('session timeout kill', { envId: id, sessionTimeoutMs })
+      warnNative('session timeout kill', { runId, envId: id, sessionTimeoutMs })
       runtime.stopBrowser(id, req).catch(() => {})
     }, sessionTimeoutMs)
 
     // 3) 打开到家后台
+    const navAt = Date.now()
     await cdpNavigate.navigateToUrl(port, entryUrl, 20000)
     await new Promise(r => setTimeout(r, 2000))
+    logNative('jddj.navigate', {
+      runId,
+      envId: id,
+      url: entryUrl,
+      elapsedMs: Date.now() - navAt
+    })
 
-    // 4) Cookie 写回
+    // 4) Cookie 写回（有 user cookie 才上云）
     let cookies = []
     try {
       const synced = await syncCookiesFromCdp(id, port, token, { timeoutMs: 15000 })
-      cookiesResult = { cookieCount: synced.cookieCount }
+      cookiesResult = {
+        cookieCount: synced.cookieCount,
+        loggedIn: !!synced.loggedIn,
+        cloudPut: synced.cloudPut || null
+      }
       cookies = synced.cookies || []
+      logNative('jddj.cookie.sync', {
+        runId,
+        envId: id,
+        cookieCount: synced.cookieCount,
+        loggedIn: !!synced.loggedIn,
+        domains: topCookieDomains(cookies),
+        backendPut: synced.cloudPut || null
+      })
     } catch (err) {
-      warnNative('session cookie sync failed', {
+      warnNative('jddj.cookie.sync', {
+        runId,
         envId: id,
         error: (err && err.message) || String(err)
       })
@@ -317,10 +468,13 @@ async function runSessionJob(runtime, envId, req, options = {}) {
     if (scrape) {
       jddj = await jddjScraper.scrapeJddj(port, {
         entryUrl,
-        collectMs: options.collectMs
+        collectMs: options.collectMs,
+        logContext: { runId, envId: id }
       })
       // 抓取仍无 shopId 时，用 cookie 补全
+      let cookieFallbackAttempted = false
       if (jddj && !jddj.shopId && cookies.length) {
+        cookieFallbackAttempted = true
         const found = parseShopIdFromCookies(cookies)
         if (found.shopId) {
           jddj = {
@@ -330,10 +484,35 @@ async function runSessionJob(runtime, envId, req, options = {}) {
           }
         }
       }
+      const jddjMeta = {
+        runId,
+        envId: id,
+        hasShopId: !!(jddj && jddj.shopId),
+        shopId: (jddj && jddj.shopId) || null,
+        shopIdSource: (jddj && jddj.shopIdSource) || null,
+        ok: !!(jddj && jddj.ok),
+        error: (jddj && jddj.error) || null,
+        businessStatus: (jddj && jddj.businessStatus) || null,
+        cookieCount: cookies.length,
+        cookieFallbackAttempted
+      }
+      if (jddj && jddj.shopId) {
+        logNative('[jddj] shopId resolved after scrape+cookie', jddjMeta)
+      } else {
+        warnNative('[jddj] shopId missing after scrape+cookie', jddjMeta)
+      }
       try {
         await persistSiteSnapshot(id, jddj, token)
+        logNative('jddj.api.site-snapshot', {
+          runId,
+          envId: id,
+          ok: !!token,
+          skipped: !token,
+          reason: token ? null : 'no-token'
+        })
       } catch (err) {
-        warnNative('persist site-snapshot failed', {
+        warnNative('jddj.api.site-snapshot', {
+          runId,
           envId: id,
           error: err.message
         })
@@ -346,26 +525,57 @@ async function runSessionJob(runtime, envId, req, options = {}) {
       }
     }
 
-    // 6) 打包并上传（与正常退出一致）
+    // 6) 打包并上传（仅到家已登录：Cookie 含 user）
     try {
       const workerDir = path.join(getWorkersRoot(), id)
       const outDir = profileSync.getSnapshotsDir(id)
       ensureDir(outDir)
       const outPath = path.join(outDir, `profile-session-${Date.now()}.zip`)
       const packed = profileSync.packProfile(workerDir, { outputPath: outPath })
-      if (token) {
-        const meta = await runtime.uploadPackedSnapshot(id, packed.path, req)
-        upload = { ok: true, meta, path: packed.path }
-      } else {
+      const loggedIn = !!cookiesResult.loggedIn
+      if (!token) {
         upload = { ok: false, skipped: true, reason: 'no-token', path: packed.path }
+        warnNative('jddj.profile.pack', {
+          runId,
+          envId: id,
+          skipped: true,
+          reason: 'no-token',
+          loggedIn,
+          path: packed.path,
+          size: packed.size
+        })
+      } else if (!loggedIn) {
+        upload = { ok: false, skipped: true, reason: 'no-user-cookie', path: packed.path }
+        warnNative('jddj.profile.pack', {
+          runId,
+          envId: id,
+          skipped: true,
+          reason: 'no-user-cookie',
+          loggedIn: false,
+          path: packed.path,
+          size: packed.size
+        })
+      } else {
+        const meta = await runtime.uploadPackedSnapshot(id, packed.path, req)
+        upload = { ok: true, meta, path: packed.path, size: packed.size }
+        logNative('jddj.profile.pack', {
+          runId,
+          envId: id,
+          ok: true,
+          loggedIn: true,
+          path: packed.path,
+          size: packed.size,
+          version: meta && meta.version
+        })
       }
     } catch (err) {
       upload = { ok: false, error: (err && err.message) || String(err) }
-      warnNative('session upload failed', { envId: id, error: upload.error })
+      warnNative('jddj.profile.pack', { runId, envId: id, error: upload.error })
     }
 
     return {
       ok: true,
+      runId,
       envId: id,
       scrape,
       pull,
@@ -376,23 +586,46 @@ async function runSessionJob(runtime, envId, req, options = {}) {
       debuggingPort: port
     }
   } catch (err) {
+    runError = (err && err.message) || String(err)
     errorNative('session-worker failed', {
+      runId,
       envId: id,
-      error: (err && err.message) || String(err)
+      error: runError
     })
     throw err
   } finally {
     if (killTimer) clearTimeout(killTimer)
     try {
-      await runtime.stopBrowser(id, req)
+      await runtime.stopBrowser(id, req, {
+        skipProfileUpload: !!(upload && upload.ok)
+      })
+      logNative('jddj.stop', {
+        runId,
+        envId: id,
+        ok: true,
+        skipProfileUpload: !!(upload && upload.ok)
+      })
     } catch (err) {
-      warnNative('session stopBrowser failed', {
+      warnNative('jddj.stop', {
+        runId,
         envId: id,
         error: err.message
       })
     }
+    logNative('jddj.run.end', {
+      runId,
+      envId: id,
+      ok: !runError,
+      error: runError,
+      totalMs: Date.now() - startedAt,
+      shopId: (jddj && jddj.shopId) || null,
+      shopIdSource: (jddj && jddj.shopIdSource) || null,
+      uploadOk: !!(upload && upload.ok),
+      uploadSkipped: !!(upload && upload.skipped)
+    })
     // 给 exit handler 一点时间做 auto-pack（若尚未上传）
     await new Promise(r => setTimeout(r, 300))
+    activeRunContext = prevCtx
   }
 }
 
@@ -409,6 +642,9 @@ function runJddjFetch(runtime, envId, req, options = {}) {
 }
 
 module.exports = {
+  hasJddjUserCookie,
+  readCookiesFromLocalProfile,
+  isLocalProfileLoggedIn,
   MAX_CONCURRENT,
   DEFAULT_SESSION_TIMEOUT_MS,
   enqueue,

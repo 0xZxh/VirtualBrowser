@@ -66,6 +66,35 @@ function errorDesktop(message, meta) {
   appendLog('desktop.log', 'ERROR', String(message), meta)
 }
 
+const LOG_ZIP_NAMES = ['native.log', 'desktop.log', 'ui.log', 'backend.log']
+
+/**
+ * Pack existing log files under getLogsDir() into a zip.
+ * @param {string} [outputPath]
+ * @returns {{ ok: boolean, path: string, files: string[] }}
+ */
+function packLogsZip(outputPath) {
+  const AdmZip = require('adm-zip')
+  const dir = ensureLogsDir()
+  const zip = new AdmZip()
+  const files = []
+  for (const name of LOG_ZIP_NAMES) {
+    const filePath = path.join(dir, name)
+    if (fs.existsSync(filePath)) {
+      zip.addLocalFile(filePath)
+      files.push(name)
+    }
+  }
+  if (!files.length) {
+    zip.addFile('_empty.txt', Buffer.from('no log files yet\n', 'utf8'))
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const out =
+    outputPath || path.join(dir, `xianfu-logs-${stamp}.zip`)
+  zip.writeZip(out)
+  return { ok: true, path: out, files }
+}
+
 module.exports = {
   getLogsDir,
   ensureLogsDir,
@@ -74,5 +103,7 @@ module.exports = {
   warnNative,
   errorNative,
   logDesktop,
-  errorDesktop
+  errorDesktop,
+  packLogsZip,
+  LOG_ZIP_NAMES
 }

@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('vbDesktop', {
   invoke: (name, params = []) => invokeNative(name, params),
   openExternal: url => ipcRenderer.invoke('desktop-open-external', url),
   openLogFolder: () => ipcRenderer.invoke('desktop-open-log-folder'),
+  downloadLogsZip: () => ipcRenderer.invoke('desktop-download-logs'),
   openDevTools: () => ipcRenderer.invoke('desktop-open-devtools'),
   /**
    * @param {(payload: { envId: string }) => void} callback

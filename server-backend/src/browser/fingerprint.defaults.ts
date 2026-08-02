@@ -144,6 +144,35 @@ function normalizeCookieInput(
   return { mode, value: value ?? '', jsonStr }
 }
 
+/** 表单是否已配置可用 Cookie（mode=1 且 value 非空数组）。 */
+export function hasFormCookies(cookie: unknown): boolean {
+  if (!cookie || typeof cookie !== 'object') return false
+  const c = cookie as { mode?: number; value?: unknown }
+  return Number(c.mode) === 1 && Array.isArray(c.value) && c.value.length > 0
+}
+
+/**
+ * 仅新建：已设 Cookie 且未显式设置刷新开关时，默认打开自动刷新。
+ * 显式 false/true 不覆盖。
+ */
+export function applyCreateAutoRefreshDefaults<T extends Record<string, unknown>>(
+  item: T
+): T {
+  if (!item || typeof item !== 'object') return item
+  if (!hasFormCookies(item.cookie)) return item
+  const hasAuto = item.autoJddj != null
+  const hasRefresh = item.jddjAutoRefresh != null
+  if (!hasAuto && !hasRefresh) {
+    ;(item as Record<string, unknown>).autoJddj = true
+    ;(item as Record<string, unknown>).jddjAutoRefresh = true
+  } else if (!hasAuto) {
+    ;(item as Record<string, unknown>).autoJddj = !!item.jddjAutoRefresh
+  } else if (!hasRefresh) {
+    ;(item as Record<string, unknown>).jddjAutoRefresh = !!item.autoJddj
+  }
+  return item
+}
+
 /** Merge client partial with defaults; fill missing fingerprint keys only. */
 export function withEnvironmentDefaults(
   item: Partial<BrowserEnvironmentItem> | null | undefined

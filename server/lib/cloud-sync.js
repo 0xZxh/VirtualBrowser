@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const profileSync = require('./profile-sync')
+const { logNative, warnNative } = require('./file-logger')
 
 function getCloudApiBase() {
   // 运行时读取：desktop-shell 可能在 require 本模块之后才写入 CLOUD_API_BASE
@@ -55,17 +56,79 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
 }
 
 async function getSnapshotMeta(envId, token) {
-  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot/meta`
+  const apiPath = `/api/profiles/${encodeURIComponent(envId)}/snapshot/meta`
+  const url = `${getCloudApiBase()}${apiPath}`
+  const t0 = Date.now()
   const res = await fetchWithTimeout(url, { headers: authHeaders(token) })
+  const elapsedMs = Date.now() - t0
 
-  if (res.status === 404) return null
+  if (res.status === 404) {
+    logNative('cloud.api', {
+      method: 'GET',
+      path: apiPath,
+      status: 404,
+      elapsedMs,
+      envId: String(envId),
+      result: 'no-snapshot'
+    })
+    return null
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    warnNative('cloud.api', {
+      method: 'GET',
+      path: apiPath,
+      status: res.status,
+      elapsedMs,
+      envId: String(envId),
+      error: text.slice(0, 200)
+    })
     throw new Error(`获取云端 meta 失败 (${res.status}): ${text}`)
   }
 
   const json = await res.json()
+  logNative('cloud.api', {
+    method: 'GET',
+    path: apiPath,
+    status: res.status,
+    elapsedMs,
+    envId: String(envId)
+  })
   return json.data || json
+}
+
+/**
+ * 上传前版本闸门：云端 version 高于本机 cloud-meta 则拒绝（stale-local）。
+ * @returns {{ ok: true } | { ok: false, reason: string, cloudMeta: object|null, localCloudMeta: object|null }}
+ */
+async function shouldUploadToCloud(envId, token) {
+  let cloudMeta = null
+  try {
+    cloudMeta = await getSnapshotMeta(envId, token)
+  } catch (err) {
+    warnNative('cloud.upload.version-check', {
+      envId: String(envId),
+      error: (err && err.message) || String(err)
+    })
+    // meta 查询失败时不阻断上传（避免误伤）
+    return { ok: true, reason: 'meta-check-failed', cloudMeta: null, localCloudMeta: null }
+  }
+  const localCloudMeta = readLocalCloudMeta(envId)
+  if (
+    cloudMeta &&
+    cloudMeta.version != null &&
+    localCloudMeta &&
+    localCloudMeta.version != null &&
+    Number(cloudMeta.version) > Number(localCloudMeta.version)
+  ) {
+    return {
+      ok: false,
+      reason: 'stale-local',
+      cloudMeta,
+      localCloudMeta
+    }
+  }
+  return { ok: true, reason: 'ok', cloudMeta, localCloudMeta }
 }
 
 async function uploadSnapshot(envId, zipPath, token) {
@@ -73,8 +136,30 @@ async function uploadSnapshot(envId, zipPath, token) {
     throw new Error(`zip 不存在: ${zipPath}`)
   }
 
+  const gate = await shouldUploadToCloud(envId, token)
+  if (!gate.ok) {
+    warnNative('cloud.upload skipped', {
+      envId: String(envId),
+      reason: gate.reason || 'stale-local',
+      localVersion: gate.localCloudMeta && gate.localCloudMeta.version,
+      cloudVersion: gate.cloudMeta && gate.cloudMeta.version
+    })
+    const err = new Error(
+      `本地快照版本落后于云端（本地 v${
+        gate.localCloudMeta && gate.localCloudMeta.version
+      } / 云端 v${gate.cloudMeta && gate.cloudMeta.version}），请先拉取再上传`
+    )
+    err.code = 'stale-local'
+    err.reason = 'stale-local'
+    err.cloudMeta = gate.cloudMeta
+    err.localCloudMeta = gate.localCloudMeta
+    throw err
+  }
+
   const buffer = fs.readFileSync(zipPath)
-  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const apiPath = `/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const url = `${getCloudApiBase()}${apiPath}`
+  const t0 = Date.now()
   const res = await fetchWithTimeout(
     url,
     {
@@ -88,25 +173,65 @@ async function uploadSnapshot(envId, zipPath, token) {
     },
     300000
   )
+  const elapsedMs = Date.now() - t0
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    warnNative('cloud.api', {
+      method: 'POST',
+      path: apiPath,
+      status: res.status,
+      elapsedMs,
+      envId: String(envId),
+      bytes: buffer.length,
+      error: text.slice(0, 200)
+    })
     throw new Error(`上传快照失败 (${res.status}): ${text}`)
   }
 
   const json = await res.json()
   const meta = json.data || json
   writeLocalCloudMeta(envId, meta)
+  logNative('cloud.api', {
+    method: 'POST',
+    path: apiPath,
+    status: res.status,
+    elapsedMs,
+    envId: String(envId),
+    bytes: buffer.length,
+    version: meta && meta.version
+  })
   return meta
 }
 
 async function downloadSnapshot(envId, workerDir, token) {
-  const url = `${getCloudApiBase()}/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const apiPath = `/api/profiles/${encodeURIComponent(envId)}/snapshot`
+  const url = `${getCloudApiBase()}${apiPath}`
+  const t0 = Date.now()
   const res = await fetchWithTimeout(url, { headers: authHeaders(token) }, 300000)
+  const elapsedMs = Date.now() - t0
 
-  if (res.status === 404) return null
+  if (res.status === 404) {
+    logNative('cloud.api', {
+      method: 'GET',
+      path: apiPath,
+      status: 404,
+      elapsedMs,
+      envId: String(envId),
+      result: 'no-snapshot'
+    })
+    return null
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    warnNative('cloud.api', {
+      method: 'GET',
+      path: apiPath,
+      status: res.status,
+      elapsedMs,
+      envId: String(envId),
+      error: text.slice(0, 200)
+    })
     throw new Error(`下载快照失败 (${res.status}): ${text}`)
   }
 
@@ -130,6 +255,16 @@ async function downloadSnapshot(envId, workerDir, token) {
   }
   writeLocalCloudMeta(envId, meta)
 
+  logNative('cloud.api', {
+    method: 'GET',
+    path: apiPath,
+    status: res.status,
+    elapsedMs,
+    envId: String(envId),
+    bytes: buffer.length,
+    version: meta.version,
+    extracted: result && result.extracted
+  })
   return { ...result, cloudMeta: meta }
 }
 
@@ -163,6 +298,7 @@ module.exports = {
   uploadSnapshot,
   downloadSnapshot,
   shouldPullFromCloud,
+  shouldUploadToCloud,
   readLocalCloudMeta,
   writeLocalCloudMeta
 }

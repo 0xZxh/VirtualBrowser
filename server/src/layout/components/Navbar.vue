@@ -21,6 +21,12 @@
           </div>
         </el-tooltip>
 
+        <el-tooltip content="下载日志包" effect="dark" placement="bottom">
+          <div class="right-menu-item hover-effect" @click="downloadLogsZip">
+            <i class="el-icon-download" />
+          </div>
+        </el-tooltip>
+
         <el-tooltip content="查看后端日志" effect="dark" placement="bottom">
           <div class="right-menu-item hover-effect" @click="openBackendLogs">
             <i class="el-icon-document" />
@@ -117,6 +123,27 @@ export default {
         this.$message.info('日志目录: ' + logsDir + '（请在资源管理器中打开）')
       } catch (err) {
         this.$message.error('打开日志目录失败: ' + (err && err.message ? err.message : String(err)))
+      }
+    },
+    async downloadLogsZip() {
+      try {
+        if (window.vbDesktop && typeof window.vbDesktop.downloadLogsZip === 'function') {
+          const res = await window.vbDesktop.downloadLogsZip()
+          if (res && res.canceled) return
+          if (res && res.ok && res.path) {
+            this.$message.success('日志包已保存: ' + res.path)
+            return
+          }
+          throw new Error((res && res.error) || '下载失败')
+        }
+        const res = await chromeSend('downloadLogsZip')
+        if (res && res.path) {
+          this.$message.success('日志包已生成: ' + res.path + '（请发给技术支持）')
+          return
+        }
+        this.$message.warning('未能生成日志包')
+      } catch (err) {
+        this.$message.error('下载日志失败: ' + (err && err.message ? err.message : String(err)))
       }
     },
     async openAdminDevTools() {

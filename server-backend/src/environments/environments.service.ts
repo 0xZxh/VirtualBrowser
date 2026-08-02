@@ -13,7 +13,10 @@ import {
   fromBrowserItem,
   toBrowserItem
 } from './environment.types'
-import { withEnvironmentDefaults } from '../browser/fingerprint.defaults'
+import {
+  applyCreateAutoRefreshDefaults,
+  withEnvironmentDefaults
+} from '../browser/fingerprint.defaults'
 import { addGroup, listGroups, GroupItem } from '../browser/groups.store'
 
 export const DEFAULT_GROUP_NAME = '默认分组'
@@ -242,7 +245,9 @@ export class EnvironmentsService {
     item: BrowserEnvironmentItem,
     envId: string
   ): Promise<BrowserEnvironmentItem> {
-    const prepared = withEnvironmentDefaults(item || {})
+    const prepared = applyCreateAutoRefreshDefaults(
+      withEnvironmentDefaults(item || {}) as Record<string, unknown>
+    ) as ReturnType<typeof withEnvironmentDefaults>
     const groupItem = this.ensureGroup(prepared.group)
     prepared.group = groupItem.name
     const record = fromBrowserItem(
@@ -457,7 +462,15 @@ export class EnvironmentsService {
         continue
       }
 
-      const record = fromBrowserItem({ ...item, id: envId }, user.id, user.tenantId, envId)
+      const prepared = applyCreateAutoRefreshDefaults({
+        ...(item as Record<string, unknown>)
+      }) as BrowserEnvironmentItem
+      const record = fromBrowserItem(
+        { ...prepared, id: envId },
+        user.id,
+        user.tenantId,
+        envId
+      )
       if (!record.name) {
         record.name = envId
       }

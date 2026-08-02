@@ -26,3 +26,5 @@ export class Environment {
 
 export const EnvironmentSchema = SchemaFactory.createForClass(Environment)
 EnvironmentSchema.index({ tenantId: 1, envId: 1 }, { unique: true })
+EnvironmentSchema.index({ ownerId: 1, group: 1 })
+EnvironmentSchema.index({ tenantId: 1, group: 1 })
