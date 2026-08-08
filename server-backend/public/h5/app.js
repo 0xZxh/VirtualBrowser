@@ -19,6 +19,10 @@
 
   let groupNames = [DEFAULT_GROUP]
   let homepageUrls = [DEFAULT_HOME]
+  let groupsLoaded = false
+  let homepagesLoaded = false
+  let groupsLoading = null
+  let homepagesLoading = null
   let suggestOpen = false
   let homepageSuggestOpen = false
 
@@ -110,57 +114,64 @@
     })
   }
 
-  async function loadGroups() {
-    try {
-      const res = await request('/api/groups')
-      groupNames = normalizeGroupList(res.data)
-    } catch {
-      groupNames = normalizeGroupList(groupNames)
-    }
-    if (!envGroupInput.value.trim()) {
-      envGroupInput.value = DEFAULT_GROUP
-    }
+  async function loadGroups(force) {
+    if (!force && groupsLoaded) return
+    if (groupsLoading) return groupsLoading
+    groupsLoading = (async () => {
+      try {
+        const res = await request('/api/groups')
+        groupNames = normalizeGroupList(res.data)
+        groupsLoaded = true
+      } catch {
+        groupNames = normalizeGroupList(groupNames)
+      } finally {
+        groupsLoading = null
+      }
+      if (!envGroupInput.value.trim()) {
+        envGroupInput.value = DEFAULT_GROUP
+      }
+    })()
+    return groupsLoading
   }
 
-  /** 异步收集已有环境启动地址；失败不影响页面 */
-  async function loadHomepageOptions() {
-    const collected = []
-    try {
-      let page = 1
-      const limit = 100
-      let total = Infinity
-      while (collected.length < total && page <= 20) {
-        const res = await request(
-          '/api/environments?page=' + page + '&limit=' + limit
-        )
+  /** 轻量 distinct 启动地址；禁止翻页拉 /api/environments */
+  async function loadHomepageOptions(force) {
+    if (!force && homepagesLoaded) return
+    if (homepagesLoading) return homepagesLoading
+    homepagesLoading = (async () => {
+      try {
+        const res = await request('/api/environments/homepage-options')
         const payload = res && res.data
         const items = Array.isArray(payload)
           ? payload
           : (payload && payload.items) || []
-        total =
-          payload && payload.total != null
-            ? Number(payload.total)
-            : items.length
-        items.forEach((item) => {
-          const hp = item && item.homepage
-          const val =
-            hp && typeof hp === 'object'
-              ? String(hp.value || '').trim()
-              : typeof hp === 'string'
-                ? hp.trim()
-                : ''
-          if (val) collected.push(val)
-        })
-        if (!items.length) break
-        page += 1
-        if (items.length < limit) break
+        homepageUrls = normalizeHomepageList(items)
+        homepagesLoaded = true
+      } catch {
+        homepageUrls = normalizeHomepageList(homepageUrls)
+      } finally {
+        homepagesLoading = null
       }
-    } catch {
-      // fail-soft：仅保留默认
+      if (envHomepageInput && !envHomepageInput.value.trim()) {
+        envHomepageInput.value = DEFAULT_HOME
+      }
+    })()
+    return homepagesLoading
+  }
+
+  function rememberGroupLocal(name) {
+    const n = String(name || '').trim()
+    if (!n) return
+    if (!groupNames.includes(n)) {
+      groupNames = normalizeGroupList(groupNames.concat([n]))
     }
-    homepageUrls = normalizeHomepageList(collected)
-    if (envHomepageInput && !envHomepageInput.value.trim()) {
-      envHomepageInput.value = DEFAULT_HOME
+  }
+
+  function rememberHomepageLocal(url) {
+    const u = String(url || '').trim()
+    if (!u) return
+    if (!homepageUrls.includes(u)) {
+      homepageUrls = normalizeHomepageList(homepageUrls.concat([u]))
     }
   }
 
@@ -262,7 +273,8 @@
 
   function bindGroupCombo() {
     envGroupInput.addEventListener('focus', () => {
-      showSuggest(envGroupInput.value)
+      // focus 展示全部，不用当前「默认分组」当过滤词
+      showSuggest('')
     })
     envGroupInput.addEventListener('input', () => {
       showSuggest(envGroupInput.value)
@@ -290,7 +302,8 @@
   function bindHomepageCombo() {
     if (!envHomepageInput || !homepageSuggest) return
     envHomepageInput.addEventListener('focus', () => {
-      showHomepageSuggest(envHomepageInput.value)
+      // focus 展示全部启动地址
+      showHomepageSuggest('')
     })
     envHomepageInput.addEventListener('input', () => {
       showHomepageSuggest(envHomepageInput.value)
@@ -336,8 +349,8 @@
     if (!envGroupInput.value.trim()) {
       envGroupInput.value = DEFAULT_GROUP
     }
-    // 先展示表单，再后台拉选项（不挡首屏交互）
-    Promise.all([loadGroups(), loadHomepageOptions()]).catch(() => {})
+    // 先展示表单；同会话已加载则不再请求
+    Promise.all([loadGroups(false), loadHomepageOptions(false)]).catch(() => {})
   }
 
   async function boot() {
@@ -399,6 +412,10 @@
       // ignore
     }
     clearSession()
+    groupsLoaded = false
+    homepagesLoaded = false
+    groupNames = [DEFAULT_GROUP]
+    homepageUrls = [DEFAULT_HOME]
     showLogin()
   })
 
@@ -479,7 +496,8 @@
       createMsg.classList.add('ok')
       $('envName').value = ''
       $('envCookie').value = ''
-      await Promise.all([loadGroups(), loadHomepageOptions()])
+      rememberGroupLocal(group)
+      rememberHomepageLocal(homepage)
       envGroupInput.value = group
       if (envHomepageInput) envHomepageInput.value = homepage
     } catch (err) {

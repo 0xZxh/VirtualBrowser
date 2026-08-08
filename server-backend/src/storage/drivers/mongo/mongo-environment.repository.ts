@@ -6,6 +6,7 @@ import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
   EnvironmentGroupCount,
   EnvironmentGroupCountFilter,
+  EnvironmentHomepageOptionsFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -95,6 +96,31 @@ export class MongoEnvironmentRepository implements EnvironmentRepository {
       group: String(r._id || '').trim(),
       count: Number(r.count) || 0
     }))
+  }
+
+  async listDistinctHomepages(
+    filter: EnvironmentHomepageOptionsFilter
+  ): Promise<string[]> {
+    const match: FilterQuery<EnvironmentDocument> = {}
+    if (filter.tenantId) match.tenantId = filter.tenantId
+    if (filter.ownerId) match.ownerId = filter.ownerId
+    const rows = await this.envModel.aggregate<{ _id: string | null }>([
+      { $match: match },
+      {
+        $project: {
+          homepage: {
+            $trim: {
+              input: {
+                $ifNull: ['$payload.homepage.value', '']
+              }
+            }
+          }
+        }
+      },
+      { $match: { homepage: { $ne: '' } } },
+      { $group: { _id: '$homepage' } }
+    ])
+    return rows.map(r => String(r._id || '').trim()).filter(Boolean)
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {

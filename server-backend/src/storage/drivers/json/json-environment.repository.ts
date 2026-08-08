@@ -3,6 +3,7 @@ import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
   EnvironmentGroupCount,
   EnvironmentGroupCountFilter,
+  EnvironmentHomepageOptionsFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -69,6 +70,26 @@ export class JsonEnvironmentRepository implements EnvironmentRepository {
       counts.set(g, (counts.get(g) || 0) + 1)
     }
     return Array.from(counts.entries()).map(([group, count]) => ({ group, count }))
+  }
+
+  async listDistinctHomepages(
+    filter: EnvironmentHomepageOptionsFilter
+  ): Promise<string[]> {
+    const set = new Set<string>()
+    for (const row of this.store.readEnvironments()) {
+      if (filter.tenantId && row.tenantId !== filter.tenantId) continue
+      if (filter.ownerId && row.ownerId !== filter.ownerId) continue
+      const mapped = this.mapRow(row)
+      const hp = mapped.payload && (mapped.payload as { homepage?: unknown }).homepage
+      const val =
+        hp && typeof hp === 'object'
+          ? String((hp as { value?: unknown }).value || '').trim()
+          : typeof hp === 'string'
+            ? hp.trim()
+            : ''
+      if (val) set.add(val)
+    }
+    return Array.from(set)
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {

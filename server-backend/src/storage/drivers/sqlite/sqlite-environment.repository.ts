@@ -3,6 +3,7 @@ import { EnvironmentRecord } from '../../../environments/environment.types'
 import {
   EnvironmentGroupCount,
   EnvironmentGroupCountFilter,
+  EnvironmentHomepageOptionsFilter,
   EnvironmentListFilter,
   EnvironmentPageOptions,
   EnvironmentRepository
@@ -115,6 +116,36 @@ export class SqliteEnvironmentRepository implements EnvironmentRepository {
       group: String(r.g || '').trim(),
       count: Number(r.c) || 0
     }))
+  }
+
+  async listDistinctHomepages(
+    filter: EnvironmentHomepageOptionsFilter
+  ): Promise<string[]> {
+    const parts: string[] = []
+    const params: unknown[] = []
+    if (filter.tenantId) {
+      parts.push('tenant_id = ?')
+      params.push(filter.tenantId)
+    }
+    if (filter.ownerId) {
+      parts.push('owner_id = ?')
+      params.push(filter.ownerId)
+    }
+    const where = parts.length ? `WHERE ${parts.join(' AND ')}` : ''
+    const rows = this.sqlite
+      .getDb()
+      .prepare(
+        `SELECT DISTINCT TRIM(json_extract(payload, '$.homepage.value')) AS homepage
+         FROM environments
+         ${where}
+         ${where ? 'AND' : 'WHERE'}
+           json_extract(payload, '$.homepage.value') IS NOT NULL
+           AND TRIM(json_extract(payload, '$.homepage.value')) != ''`
+      )
+      .all(...params) as Array<{ homepage: string | null }>
+    return rows
+      .map(r => String(r.homepage || '').trim())
+      .filter(Boolean)
   }
 
   async getMaxEnvId(tenantId: string): Promise<number> {

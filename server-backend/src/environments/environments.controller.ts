@@ -71,6 +71,13 @@ export class EnvironmentsController {
     return { code: 0, data }
   }
 
+  /** Distinct homepage URLs for H5 create combo — must stay before :envId */
+  @Get('homepage-options')
+  async homepageOptions(@Req() req: { user: UserRecord }) {
+    const data = await this.environmentsService.listHomepageOptions(req.user)
+    return { code: 0, data }
+  }
+
   @Get(':envId')
   async getOne(@Param('envId') envId: string, @Req() req: { user: UserRecord }) {
     const data = await this.environmentsService.getOne(req.user, envId)

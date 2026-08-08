@@ -31,6 +31,12 @@ export type EnvironmentGroupCount = {
   count: number
 }
 
+/** Same scope as group counts: tenant-wide or owner-scoped. */
+export type EnvironmentHomepageOptionsFilter = {
+  tenantId?: string
+  ownerId?: string
+}
+
 export interface EnvironmentRepository {
   findByTenant(tenantId: string): Promise<EnvironmentRecord[]>
   findByOwner(ownerId: string): Promise<EnvironmentRecord[]>
@@ -43,6 +49,8 @@ export interface EnvironmentRepository {
   count(filter: EnvironmentListFilter): Promise<number>
   /** Aggregate counts by group field; empty group normalized by caller or as ''. */
   countByGroup(filter: EnvironmentGroupCountFilter): Promise<EnvironmentGroupCount[]>
+  /** Distinct non-empty payload.homepage.value strings (no full payload). */
+  listDistinctHomepages(filter: EnvironmentHomepageOptionsFilter): Promise<string[]>
   /** Max numeric envId for tenant; 0 if none */
   getMaxEnvId(tenantId: string): Promise<number>
   create(record: EnvironmentRecord): Promise<EnvironmentRecord>

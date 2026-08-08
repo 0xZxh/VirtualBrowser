@@ -15,6 +15,7 @@ import {
 } from './environment.types'
 import {
   applyCreateAutoRefreshDefaults,
+  DEFAULT_HOMEPAGE,
   withEnvironmentDefaults
 } from '../browser/fingerprint.defaults'
 import { addGroup, listGroups, GroupItem } from '../browser/groups.store'
@@ -87,6 +88,25 @@ export class EnvironmentsService {
       ? await this.envRepository.findByTenant(user.tenantId)
       : await this.envRepository.findByOwner(user.id)
     return records.map(toBrowserItem)
+  }
+
+  /** Lightweight distinct homepage URLs for H5/create combos (no payload). */
+  async listHomepageOptions(user: UserRecord): Promise<{ items: string[] }> {
+    const filter = this.isAdmin(user)
+      ? { tenantId: user.tenantId }
+      : { ownerId: user.id }
+    const fromDb = await this.envRepository.listDistinctHomepages(filter)
+    const set = new Set<string>([DEFAULT_HOMEPAGE])
+    for (const u of fromDb) {
+      const s = String(u || '').trim()
+      if (s) set.add(s)
+    }
+    const items = Array.from(set).sort((a, b) => {
+      if (a === DEFAULT_HOMEPAGE) return -1
+      if (b === DEFAULT_HOMEPAGE) return 1
+      return a.localeCompare(b)
+    })
+    return { items }
   }
 
   async listPage(
