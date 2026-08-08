@@ -63,7 +63,16 @@
           </label>
           <label>
             启动主页
-            <input id="envHomepage" value="https://store.jddj.com/" />
+            <div class="combo">
+              <input
+                id="envHomepage"
+                autocomplete="off"
+                placeholder="搜索已有地址或输入 URL"
+                value="https://store.jddj.com/"
+              />
+              <ul id="homepageSuggest" class="combo-list hidden" role="listbox"></ul>
+            </div>
+            <span class="field-hint">可选择已有环境地址，也可直接输入新 URL</span>
           </label>
           <label>
             Cookie（可选）

@@ -71,7 +71,11 @@
         </el-button>
       </div>
       <div class="toolbar-secondary">
-        <el-tooltip :content="$t('browser.jddjRefreshLeaderHint')" placement="bottom">
+        <el-tooltip
+          v-if="isAdmin"
+          :content="$t('browser.jddjRefreshLeaderHint')"
+          placement="bottom"
+        >
           <span class="toolbar-leader-switch">
             <span class="toolbar-leader-label">{{ $t('browser.jddjRefreshLeader') }}</span>
             <el-switch v-model="jddjRefreshLeader" @change="onJddjRefreshLeaderChange" />
@@ -1710,6 +1714,10 @@ export default {
       })
     },
     async onJddjRefreshLeaderChange(val) {
+      if (!this.isAdmin) {
+        this.jddjRefreshLeader = false
+        return
+      }
       const leader = val === true
       try {
         await setGlobalData('jddjRefreshLeader', leader)
@@ -1724,6 +1732,11 @@ export default {
     },
     startJddjSchedule() {
       this.stopJddjSchedule()
+      if (!this.isAdmin) {
+        console.log('[jddj] schedule skipped: not admin')
+        this.appendNativeLog('INFO', 'jddj.schedule.skip', { reason: 'not-admin' })
+        return
+      }
       if (!this.isJddjRefreshLeader()) {
         console.log('[jddj] schedule skipped: this PC is not refresh leader')
         this.appendNativeLog('INFO', 'jddj.schedule.skip', { reason: 'not-leader' })
@@ -1747,6 +1760,7 @@ export default {
       }
     },
     async runJddjScheduleTick() {
+      if (!this.isAdmin || !this.isJddjRefreshLeader()) return
       if (this._jddjScheduleRunning) return
       this._jddjScheduleRunning = true
       const startedAt = Date.now()
@@ -1810,7 +1824,7 @@ export default {
         this.GlobalData = globalData
         this.apiLink = this.GlobalData.apiLink || ''
         this.Channel = this.GlobalData.Channel || 'selfhost'
-        this.jddjRefreshLeader = this.GlobalData.jddjRefreshLeader === true
+        this.jddjRefreshLeader = this.isAdmin && this.GlobalData.jddjRefreshLeader === true
         if (prevLeader !== this.isJddjRefreshLeader()) {
           this.startJddjSchedule()
         }

@@ -104,7 +104,7 @@ sequenceDiagram
 | 环境开关 | `autoJddj` / `jddjAutoRefresh`（双字段） |
 | 新建默认 | Cookie `mode=1` 且 `value[]` 非空 → 创建时默认双开（编辑不联动） |
 | 周期 | `global.dat.jddjScheduleMs`，默认 30 分钟 |
-| 责任机 | `global.dat.jddjRefreshLeader`（缺省 `false`）；工具栏显式打开后本机才跑 interval |
+| 责任机 | `global.dat.jddjRefreshLeader`（缺省 `false`）；**仅 admin** 可见开关且仅 admin 会话挂 interval |
 | 调度位置 | 列表页前端 `startJddjSchedule`（页面不打开则不跑） |
 | 会话流水线 | pull → 无头启动 → 导航 → cookie → scrape → site-snapshot → 有登录则 upload |
 

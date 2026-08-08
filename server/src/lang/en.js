@@ -104,7 +104,7 @@ export default {
     jddjAutoRefresh: 'Auto refresh (~every 30 min)',
     jddjRefreshLeader: 'This PC runs auto refresh',
     jddjRefreshLeaderHint:
-      'Off by default. For multi-PC enable on only one machine; when on, this PC runs the schedule (manual refresh still works when off)',
+      'Off by default; admin only. Enable on one PC to run the schedule (manual refresh still works when off)',
     jddjOrdersTitle: 'Store orders',
     jddjOrdersHint: 'Click to view orders',
     jddjOrderId: 'Order ID',

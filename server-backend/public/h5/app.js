@@ -14,9 +14,13 @@
   const createMsg = $('createMsg')
   const envGroupInput = $('envGroup')
   const groupSuggest = $('groupSuggest')
+  const envHomepageInput = $('envHomepage')
+  const homepageSuggest = $('homepageSuggest')
 
   let groupNames = [DEFAULT_GROUP]
+  let homepageUrls = [DEFAULT_HOME]
   let suggestOpen = false
+  let homepageSuggestOpen = false
 
   function apiBase() {
     // Same-origin when served from Nest /h5/
@@ -93,6 +97,19 @@
     })
   }
 
+  function normalizeHomepageList(urls) {
+    const set = new Set([DEFAULT_HOME])
+    ;(urls || []).forEach((u) => {
+      const s = String(u || '').trim()
+      if (s) set.add(s)
+    })
+    return Array.from(set).sort((a, b) => {
+      if (a === DEFAULT_HOME) return -1
+      if (b === DEFAULT_HOME) return 1
+      return a.localeCompare(b)
+    })
+  }
+
   async function loadGroups() {
     try {
       const res = await request('/api/groups')
@@ -105,16 +122,71 @@
     }
   }
 
+  /** 异步收集已有环境启动地址；失败不影响页面 */
+  async function loadHomepageOptions() {
+    const collected = []
+    try {
+      let page = 1
+      const limit = 100
+      let total = Infinity
+      while (collected.length < total && page <= 20) {
+        const res = await request(
+          '/api/environments?page=' + page + '&limit=' + limit
+        )
+        const payload = res && res.data
+        const items = Array.isArray(payload)
+          ? payload
+          : (payload && payload.items) || []
+        total =
+          payload && payload.total != null
+            ? Number(payload.total)
+            : items.length
+        items.forEach((item) => {
+          const hp = item && item.homepage
+          const val =
+            hp && typeof hp === 'object'
+              ? String(hp.value || '').trim()
+              : typeof hp === 'string'
+                ? hp.trim()
+                : ''
+          if (val) collected.push(val)
+        })
+        if (!items.length) break
+        page += 1
+        if (items.length < limit) break
+      }
+    } catch {
+      // fail-soft：仅保留默认
+    }
+    homepageUrls = normalizeHomepageList(collected)
+    if (envHomepageInput && !envHomepageInput.value.trim()) {
+      envHomepageInput.value = DEFAULT_HOME
+    }
+  }
+
   function filterGroups(query) {
     const q = String(query || '').trim().toLowerCase()
     if (!q) return groupNames.slice()
     return groupNames.filter((name) => name.toLowerCase().includes(q))
   }
 
+  function filterHomepages(query) {
+    const q = String(query || '').trim().toLowerCase()
+    if (!q) return homepageUrls.slice()
+    return homepageUrls.filter((url) => url.toLowerCase().includes(q))
+  }
+
   function hideSuggest() {
     suggestOpen = false
     groupSuggest.classList.add('hidden')
     groupSuggest.innerHTML = ''
+  }
+
+  function hideHomepageSuggest() {
+    homepageSuggestOpen = false
+    if (!homepageSuggest) return
+    homepageSuggest.classList.add('hidden')
+    homepageSuggest.innerHTML = ''
   }
 
   function showSuggest(query) {
@@ -159,6 +231,35 @@
     groupSuggest.classList.remove('hidden')
   }
 
+  function showHomepageSuggest(query) {
+    if (!homepageSuggest || !envHomepageInput) return
+    const q = String(query || '').trim()
+    const matched = filterHomepages(q)
+    homepageSuggest.innerHTML = ''
+
+    matched.forEach((url) => {
+      const li = document.createElement('li')
+      li.setAttribute('role', 'option')
+      li.textContent = url
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        envHomepageInput.value = url
+        hideHomepageSuggest()
+      })
+      homepageSuggest.appendChild(li)
+    })
+
+    if (!homepageSuggest.children.length) {
+      const li = document.createElement('li')
+      li.className = 'muted'
+      li.textContent = q ? '无匹配项，可直接使用当前输入' : '暂无已有地址'
+      homepageSuggest.appendChild(li)
+    }
+
+    homepageSuggestOpen = true
+    homepageSuggest.classList.remove('hidden')
+  }
+
   function bindGroupCombo() {
     envGroupInput.addEventListener('focus', () => {
       showSuggest(envGroupInput.value)
@@ -186,6 +287,34 @@
     })
   }
 
+  function bindHomepageCombo() {
+    if (!envHomepageInput || !homepageSuggest) return
+    envHomepageInput.addEventListener('focus', () => {
+      showHomepageSuggest(envHomepageInput.value)
+    })
+    envHomepageInput.addEventListener('input', () => {
+      showHomepageSuggest(envHomepageInput.value)
+    })
+    envHomepageInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideHomepageSuggest()
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        hideHomepageSuggest()
+      }
+    })
+    envHomepageInput.addEventListener('blur', () => {
+      setTimeout(hideHomepageSuggest, 150)
+    })
+    document.addEventListener('click', (e) => {
+      if (!homepageSuggestOpen) return
+      const wrap = envHomepageInput.closest('.combo')
+      if (wrap && !wrap.contains(e.target)) hideHomepageSuggest()
+    })
+  }
+
   function showLogin() {
     loginView.classList.remove('hidden')
     createView.classList.add('hidden')
@@ -201,13 +330,14 @@
     if (ownerEl) {
       ownerEl.value = (user && (user.name || user.username)) || '当前用户'
     }
-    if (!$('envHomepage').value) {
-      $('envHomepage').value = DEFAULT_HOME
+    if (envHomepageInput && !envHomepageInput.value.trim()) {
+      envHomepageInput.value = DEFAULT_HOME
     }
     if (!envGroupInput.value.trim()) {
       envGroupInput.value = DEFAULT_GROUP
     }
-    await loadGroups()
+    // 先展示表单，再后台拉选项（不挡首屏交互）
+    Promise.all([loadGroups(), loadHomepageOptions()]).catch(() => {})
   }
 
   async function boot() {
@@ -277,7 +407,8 @@
     createMsg.className = 'msg'
     const name = $('envName').value.trim()
     const group = envGroupInput.value.trim() || DEFAULT_GROUP
-    const homepage = $('envHomepage').value.trim() || DEFAULT_HOME
+    const homepage =
+      (envHomepageInput && envHomepageInput.value.trim()) || DEFAULT_HOME
     const cookieRaw = $('envCookie').value.trim()
 
     if (!name) {
@@ -348,8 +479,9 @@
       createMsg.classList.add('ok')
       $('envName').value = ''
       $('envCookie').value = ''
-      await loadGroups()
+      await Promise.all([loadGroups(), loadHomepageOptions()])
       envGroupInput.value = group
+      if (envHomepageInput) envHomepageInput.value = homepage
     } catch (err) {
       createMsg.textContent = err.message || String(err)
       createMsg.classList.add('err')
@@ -359,5 +491,6 @@
   })
 
   bindGroupCombo()
+  bindHomepageCombo()
   boot()
 })()

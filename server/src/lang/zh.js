@@ -101,8 +101,7 @@ export default {
     jddjRefresh: '刷新店铺',
     jddjAutoRefresh: '启用自动刷新（约每 30 分钟）',
     jddjRefreshLeader: '本机负责自动刷新',
-    jddjRefreshLeaderHint:
-      '默认关闭。多终端时仅一台开启：打开后本机定时刷新店铺；关闭则不跑自动刷新（仍可手动刷新）',
+    jddjRefreshLeaderHint: '默认关闭，仅管理员可见。多终端时仅一台开启；打开后本机定时刷新店铺',
     jddjOrdersTitle: '店铺订单',
     jddjOrdersHint: '点击查看订单列表',
     jddjOrderId: '订单号',
